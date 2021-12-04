@@ -1,0 +1,29 @@
+name: gymPGFS
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - pandas
+  - numpy
+  # need to state all of these explicitly to beat a known dependency issues in dask
+  - dask=*
+  - dask-core=*
+  - distributed=*
+  - dask-yarn=*
+  - cudatoolkit=10.2
+  # pytorch=1.8.1=py3.7_cuda11.1_cudnn8.0.5_0
+  - pytorch
+  - torchvision
+  - torchaudio
+  - tensorboard
+  # change to 11.1 for newer GPUs
+  - rdkit=2020.09.5
+  - molvs
+  - gym
+  - tqdm
+  # important for the scoring models to be loaded properly
+  - scikit-learn=0.22.0
+  - lightgbm
+  - setuptools
+  # important for reaction visualisation
+  - lxml

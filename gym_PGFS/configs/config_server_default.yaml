@@ -1,0 +1,92 @@
+preprocessing:
+  verbosity: 3
+
+  # description of reactions for prefiltering
+  reactions:
+    source: "DINGOS"
+    max_templates: 200
+    max_reactants: 2
+    min_reactants: 1
+
+  # same for reactants
+  reactants:
+    source: "Enamine"
+    fingerprints: ['ECFP_2_1024', 'ECFP_2_512', 'ECFP_2_256', 'ECFP_2_128', 'MolD']
+    max_reactants: -1
+    max_heavy_atoms: 15
+    # TODO:
+    # remove_reaction_agents: true
+    # remove_intra, remove_dimer
+
+  # specifications for dask for reactant preprocessing
+  compute:
+    max_mem: 80
+    n_workers: 6
+    n_threads_per_worker: 1
+
+  # filtering parameters applied
+  filter:
+    perform: true
+    min_template_compatible: 1
+    min_reactants_per_template: 10
+    min_reactants_per_reaction: 10
+chem_world:
+  checkpoints:
+    subdir_prefix: "preprocessed"
+    templates: "templates_processed.pkl"
+    reactions: "reactions_processed.pkl"
+    reactants: "reactants_processed.pkl"
+    fingerprints: "fingerprints.pkl"
+
+  observation_fingerprints:
+    type: "ECFP_2_1024"
+    comparison: "cos"
+    normalize: false
+  action_fingerprints:
+    type: "MolD"
+    comparison: "cos"
+    normalize: true
+  # make it possible to use rdchiral as backend in the future
+  #backend: NOT_IMPLEMENTED
+env:
+  fmodel_type: "str_repr"
+  fmodel_kwargs: {}
+  scoring: 'rt_pCHEMBL'
+  # scoring transform either 'scale', 'norm' or 'none'
+  scoring_transform: 'scale'
+  max_steps: 5
+  render: true
+  give_info: true
+run:
+  verbosity: 3
+  device: "cuda:2"
+  actor_critic:
+    actor:
+      # description of the network that picks reagents
+      pi_net_layers: [256, 256, 167]
+      smooth_c: 0.2
+      smooth_sigma: 0.2
+      # description of the network that calls the shots on the template
+      f_net_layers: [256, 128, 128]
+    critic:
+      q_net_layers: [256, 64, 16]
+    update_tA_every: 2
+    update_tB_every: 3
+    update_tAc_every: 5
+  g_tau_start: 1.0
+  g_tau_end: 0.1
+  gumbel_tau_default: 0.1
+  gamma: 0.99
+  lr_actor: 0.0001
+  lr_critic: 0.0003
+  f_net_ce_modifier: 0.1
+  # higher than in the paper, since I do updates less frequently
+  target_tau: 0.01 # 0.005
+  max_buffer_size: 300000
+  min_buffer_content: 4096
+  batch_size: 32
+  max_episodes: 50000
+  # measured in batch updates
+  checkpoint_every: 1000
+  resume_training: false
+  resume_file_name: "agent_50000.state"
