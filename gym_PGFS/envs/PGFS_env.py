@@ -5,7 +5,7 @@ from gym.spaces import Space, Tuple as SpaceDict, MultiBinary, Discrete
 from gym.error import ResetNeeded, InvalidAction
 from gym_PGFS.forward_model import Reaction_Model
 from gym_PGFS.function_set_basic import Default_RModel
-from gym_PGFS.scoring_functions import get_scoring_function
+from gym_PGFS.scoring_functions import get_scoring_function, ScoringFunctionPGFS
 
 from typing import Callable, Type, Union
 
@@ -29,8 +29,7 @@ class PGFS_env(gym.Env):
         
     """
     def __init__(self,
-                 scoring_fn: Union[Callable, str],  # scoring function
-                 scoring_transform: str = 'none',
+                 scoring_fn: ScoringFunctionPGFS,  # scoring function
                  rng_seed=778821916,
                  give_info: bool = False,
                  max_steps: int = 10,
@@ -66,10 +65,8 @@ class PGFS_env(gym.Env):
 
         self.rmodel = fmodel(record_history=self.enable_render, **kwargs)
 
-        if isinstance(scoring_fn, str):
-            self.scoring_fn = get_scoring_function(scoring_fn, scoring_transform=scoring_transform)
-        else:
-            self.scoring_fn = scoring_fn
+        self.scoring_fn = scoring_fn
+
         self.observation_space = self.rmodel.get_observation_spec()
         self.action_space = self.rmodel.get_action_spec()
 
@@ -92,7 +89,7 @@ class PGFS_env(gym.Env):
 
         if self.enable_render:
             # if rendering is enabled, provide the scores for the molecules
-            self.rmodel.history[-1]['new_mol_score'] = self.scoring_fn(self.rmodel.get_current_molecule())
+            self.rmodel.history[-1]['new_mol_score'] = self.scoring_fn.score(self.rmodel.get_current_molecule())
 
         return state
 
@@ -118,7 +115,7 @@ class PGFS_env(gym.Env):
 
         # compute reward
         # reward = self.scoring_function(newstate, **self.kwargs)
-        reward = self.scoring_fn(self.rmodel.get_current_molecule())
+        reward = self.scoring_fn.score(self.rmodel.get_current_molecule())
 
         info = {}
         if self.give_info:

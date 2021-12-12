@@ -24,6 +24,9 @@ from rdkit.ML.Descriptors import MoleculeDescriptors
 
 from .constants import DEFAULT_MOL_WIDTH, DEFAULT_MOL_HEIGHT, MOLDSET_SELECT_DESCRIPTORS
 
+# for some guacamole functions
+from guacamol.utils.chemistry import initialise_neutralisation_reactions, neutralise_charges, split_charged_mol, canonicalize, remove_duplicates
+
 
 def SmilesToSVG(smi: str, highlight: List = None, dims = (DEFAULT_MOL_WIDTH, DEFAULT_MOL_HEIGHT)) -> str:
     '''
@@ -78,6 +81,7 @@ def ChemMolFromSmilesWrapper(smi: str) -> Chem.Mol:
         m = None
     finally:
         return m
+
 
 def CheckMol(m: Chem.Mol) -> bool:
     problems = Chem.DetectChemistryProblems(m)

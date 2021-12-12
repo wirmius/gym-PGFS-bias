@@ -16,7 +16,7 @@ def record_rewards_from_env(env: PGFS_env, agent: PGFS_agent = None, n_samples=1
     ep_counter = 0
     while ep_counter < n_samples:
         s = env.reset()
-        retarray[0, ep_counter] = env.scoring_fn(env.rmodel.current_mol)
+        retarray[0, ep_counter] = env.scoring_fn.score(env.rmodel.current_mol)
         try:
             for i in range(1, env.max_steps+1):
                 if agent:

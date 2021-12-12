@@ -3,7 +3,7 @@ from gym_PGFS.envs.PGFS_env import PGFS_env
 from gym_PGFS.envs.PGFS_goal_env import PGFS_Goal_env
 from gym_PGFS.utils import MolVector as Molecule
 from gym_PGFS.function_set_basic import get_forward_model
-
+from gym_PGFS.scoring_functions import get_scoring_function
 from typing import Union, Dict
 import os
 
@@ -29,8 +29,10 @@ class gym_PGFS_basic_from_config(PGFS_env):
 
         env_config = config['env']
 
-        scoring_fn = env_config['scoring']
-        scoring_transform = env_config['scoring_transform']
+        scoring_config = env_config['scoring']
+        # initialize the scoring function
+        scoring_fn = get_scoring_function(**scoring_config)
+
         give_info = env_config['give_info']
         render = env_config['render']
         max_steps = env_config['max_steps']
@@ -42,7 +44,6 @@ class gym_PGFS_basic_from_config(PGFS_env):
 
         super().__init__(
             scoring_fn=scoring_fn,
-            scoring_transform=scoring_transform,
             give_info=give_info,
             max_steps=max_steps,
             render=render,
