@@ -1,9 +1,8 @@
 from gym_PGFS.chemutils import ChemWorld
 from gym_PGFS.envs.PGFS_env import PGFS_env
 from gym_PGFS.envs.PGFS_goal_env import PGFS_Goal_env
-from gym_PGFS.utils import MolVector as Molecule
 from gym_PGFS.function_set_basic import get_forward_model
-from gym_PGFS.scoring_functions import get_scoring_function
+from gym_PGFS.scorers.scorer import get_scoring_function
 from typing import Union, Dict
 import os
 

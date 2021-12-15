@@ -1,13 +1,12 @@
 import numpy as np
 
 import gym
-from gym.spaces import Space, Tuple as SpaceDict, MultiBinary, Discrete
 from gym.error import ResetNeeded, InvalidAction
 from gym_PGFS.forward_model import Reaction_Model
 from gym_PGFS.function_set_basic import Default_RModel
-from gym_PGFS.scoring_functions import get_scoring_function, ScoringFunctionPGFS
+from gym_PGFS.scorers.scorer import ScorerPGFS
 
-from typing import Callable, Type, Union
+from typing import Type
 
 
 class PGFS_env(gym.Env):
@@ -29,7 +28,7 @@ class PGFS_env(gym.Env):
         
     """
     def __init__(self,
-                 scoring_fn: ScoringFunctionPGFS,  # scoring function
+                 scoring_fn: ScorerPGFS,  # scoring function
                  rng_seed=778821916,
                  give_info: bool = False,
                  max_steps: int = 10,

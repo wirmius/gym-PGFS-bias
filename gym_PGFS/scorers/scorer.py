@@ -5,29 +5,19 @@ import pandas as pd
 
 from gym_PGFS.external.pollo1060.pipeliner_light.pipelines import ClassicPipe
 from gym_PGFS.external.pollo1060.pipeliner_light.smol import SMol
-from .chemwrapped import Mol, ChemMolToSmilesWrapper
+from gym_PGFS.chemwrapped import Mol, ECFP6_bitvector_numpy
 
 import os
 from typing import Union, Callable
 from functools import partial
 
-from .datasets import get_fingerprint_fn, get_distance_fn
-from .utils import ProbablyBadHeteroatomsError
+from gym_PGFS.datasets import get_fingerprint_fn, get_distance_fn
+from gym_PGFS.utils import ProbablyBadHeteroatomsError
 
 import abc
 from typing import Tuple, Dict
 
-from .constants import PGFS_MODULE_ROOT
-
-
-# def clamp_and_scale_score(m, score: Callable, low, high, invert=False) -> float:
-#     # apply the function
-#     f = score(m)
-#
-#     # clamp the result and scale
-#     f = (max(low, min(high, f)) - low)/(high-low)
-#
-#     return f - 1
+from gym_PGFS.constants import PGFS_MODULE_ROOT
 
 
 def normalize_score(score, mean, std) -> float:
@@ -46,7 +36,7 @@ def normalize_and_clamp_score(score, mean, std, low, high) -> float:
     return f
 
 
-class ScoringFunctionPGFS(abc.ABC):
+class ScorerPGFS(abc.ABC):
 
     @abc.abstractmethod
     def __init__(self, **kwargs):
@@ -92,7 +82,7 @@ class ScoringFunctionPGFS(abc.ABC):
         pass
 
 
-class PipelinerScorepCHEMBL(ScoringFunctionPGFS):
+class PipelinerScorer(ScorerPGFS):
 
     def __init__(self, **kwargs):
         # the name indicates the name of one of the three proteins used,
@@ -152,112 +142,81 @@ class PipelinerScorepCHEMBL(ScoringFunctionPGFS):
     def present_score(self, score: float):
         return score * self.std + self.mean if self.transform.startswith("norm") else score
 
-#
-# ccr5_pipe = ClassicPipe.load(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-#                                           'external/pollo1060/Models/hiv_ccr5'))
-# int_pipe = ClassicPipe.load(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-#                                          'external/pollo1060/Models/hiv_int'))
-# rt_pipe = ClassicPipe.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'external/pollo1060/Models/hiv_rt'))
-#
-#
-# def ccr5_score_pollo_1060(m: Union[Mol, str]) -> float:
-#     '''
-#
-#     Parameters
-#     ----------
-#     m
-#         A mol or an str
-#     Returns
-#     -------
-#
-#     '''
-#     sm = SMol(m)
-#     sm.featurize(ccr5_pipe.features)
-#     if np.any(np.isinf(sm.features_values)):
-#         # in an attempt to catch the elusive bug with two inf values at pos 6 and 8
-#         raise ProbablyBadHeteroatomsError(sm.smiles,
-#                                           sm.features_values,
-#                                           sm.features_names)
-#         #print(sm.features_values)
-#         #print(sm.features_names)
-#         #print(m)
-#         #print(ChemMolToSmilesWrapper(sm.rmol))
-#     return ccr5_pipe.predict_vector(sm.features_values)
-#
-#
-# def hiv_int_score_pollo_1060(m: Union[Mol, str]) -> float:
-#     '''
-#
-#     Parameters
-#     ----------
-#     m
-#         A mol or an str
-#     Returns
-#     -------
-#
-#     '''
-#     sm = SMol(m)
-#     sm.featurize(int_pipe.features)
-#     if np.any(np.isinf(sm.features_values)):
-#         # in an attempt to catch the elusive bug with two inf values at pos 6 and 8
-#         raise ProbablyBadHeteroatomsError(sm.smiles,
-#                                           sm.features_values,
-#                                           sm.features_names)
-#     return int_pipe.predict_vector(sm.features_values)
-#
-#
-# def hiv_rt_score_pollo_1060(m: Union[Mol, str]) -> float:
-#     '''
-#
-#     Parameters
-#     ----------
-#     m
-#         A mol or an str
-#     Returns
-#     -------
-#
-#     '''
-#     sm = SMol(m)
-#     sm.featurize(rt_pipe.features)
-#     if np.any(np.isinf(sm.features_values)):
-#         # in an attempt to catch the elusive bug with two inf values at pos 6 and 8
-#         raise ProbablyBadHeteroatomsError(sm.smiles,
-#                                           sm.features_values,
-#                                           sm.features_names)
-#     return rt_pipe.predict_vector(sm.features_values)
-#
-#
-# # initialize some globals for the toy score function
-# fp_fun, fp_params = get_fingerprint_fn('ECFP_4_1024')
-# fp_distance = get_distance_fn('dice')
-#
-# #tetra_smiles = 'CC1(C(CC(=O)C3=C(C4(C(CC31)C(C(=C(C4=O)C(=O))O))O)O)O)O'
-# tetra_smiles = 'C1(=C2C(CCC1)C(C(CC2=O)O)(C)O)O'
-# tetra_fp = fp_fun(tetra_smiles, **fp_params)
-#
-# def toy_set_score(m: Union[Mol, str]) -> float:
-#     # in the toy task, the purpose is to generate a molecule that is as similar as possible to the
-#     # tetracycline-derived structure, which should be achievable given the materials in the toy set
-#     fp = fp_fun(m, **fp_params)
-#     d = fp_distance(tetra_fp, fp)
-#     return d
-#
-#
-# # function, low, high
-# scoring_function_registry = {
-#     'ccr5_pCHEMBL': [ccr5_score_pollo_1060, {'low': 5, 'high': 10, 'mean': 6, 'std': 1}],
-#     'int_pCHEMBL': [hiv_int_score_pollo_1060, {'low': 5, 'high': 10, 'mean': 6, 'std': 1}], # not accurate, needs elaboration
-#     'rt_pCHEMBL': [hiv_rt_score_pollo_1060, {'low': 4, 'high': 8, 'mean': 5.93, 'std': 0.43}],
-#     'toy_score': [toy_set_score, {'low': 5, 'high': 10, 'mean': 6, 'std': 1}]
-# }
-#
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+from sklearn.ensemble import RandomForestClassifier
 
-def get_scoring_function(type: str, **params) -> ScoringFunctionPGFS:
+class MGenFailScorer(ScorerPGFS):
+    def __init__(self,
+                 fp_len: int = 1024,
+                 fp_radius: int = 3,
+                 **kwargs):
+        # must have a chid
+        chid = kwargs['chid']
+
+
+    def train_model(self):
+
+        # read data and calculate ecfp fingerprints
+        assay_file = f'./assays/processed/{chid}.csv'
+        print(f'Reading data from: {assay_file}')
+        df = pd.read_csv(assay_file)
+
+        df['ecfp'] = df['smiles'].apply(partial(ECFP6_bitvector_numpy(radius=fp_radius, size=fp_len)))
+        df1, df2 = train_test_split(df, test_size=0.5, stratify=df['label'])
+
+        X1 = np.array(list(df1['ecfp']))
+        X2 = np.array(list(df2['ecfp']))
+
+        y1 = np.array(list(df1['label']))
+        y2 = np.array(list(df2['label']))
+
+        del df1['ecfp']
+        del df2['ecfp']
+
+        balance = (np.mean(y1), np.mean(y2))
+
+        # train classifiers and store them in dictionary
+        clfs = {}
+        clfs['Split1'] = RandomForestClassifier(
+            n_estimators=n_estimators, n_jobs=n_jobs)
+        clfs['Split1'].fit(X1, y1)
+
+        clfs['Split1_alt'] = RandomForestClassifier(
+            n_estimators=n_estimators, n_jobs=n_jobs)
+        clfs['Split1_alt'].fit(X1, y1)
+
+        clfs['Split2'] = RandomForestClassifier(
+            n_estimators=n_estimators, n_jobs=n_jobs)
+        clfs['Split2'].fit(X2, y2)
+
+        # calculate AUCs for the clfs
+        aucs = {}
+        aucs['Split1'] = calc_auc(clfs['Split1'], X2, y2)
+        aucs['Split1_alt'] = calc_auc(clfs['Split1_alt'], X2, y2)
+        aucs['Split2'] = calc_auc(clfs['Split2'], X1, y1)
+        print("AUCs:")
+        for k, v in aucs.items():
+            print(f'{k}: {v}')
+
+        return clfs, aucs, balance, df1, df2
+
+    def get_id(self) -> str:
+        pass
+
+    def score(self, mol: Union[Mol, str]) -> float:
+        pass
+
+    def present_score(self, score: float) -> float:
+        pass
+
+
+def get_scoring_function(type: str, **params) -> ScorerPGFS:
    if type == "pollo1060":
-       return PipelinerScorepCHEMBL(**params)
+       return PipelinerScorer(**params)
    elif type == "guacamol":
-       pass
+       raise NotImplemented
    elif type == "guacamol_mgenfail":
-       pass
+       return MGenFailScorer(**params)
    else:
        raise AttributeError(f"Scoring function type {type} doesnt exist.")

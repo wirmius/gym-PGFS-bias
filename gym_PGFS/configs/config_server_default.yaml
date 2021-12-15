@@ -90,3 +90,5 @@ run:
   checkpoint_every: 1000
   resume_training: false
   resume_file_name: "agent_50000.state"
+logging:
+  log: ""
