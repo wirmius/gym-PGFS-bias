@@ -27,3 +27,5 @@ dependencies:
   - setuptools
   # important for reaction visualisation
   - lxml
+  # for guacamol support
+  - guacamol

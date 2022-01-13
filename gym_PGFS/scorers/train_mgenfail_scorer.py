@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score, accuracy_score
 from sklearn.ensemble import RandomForestClassifier
 
-from parametersearch import ParameterSearch, define_search_grid
+from gym_PGFS.scorers.parametersearch import ParameterSearch, define_search_grid
 
 # logging
 from aim import Run
@@ -100,7 +100,6 @@ str
         )
 
         # save the results to the data
-        fold_outcome['fold_n'] = fold_count
         result_list.append(fold_outcome)
 
     return result_list
@@ -134,15 +133,37 @@ def train_one_fold(X: np.ndarray, y: np.ndarray,
     validation_losses = {"score.valid_"+k: loss_fn(y_valid, clf.predict(X_valid)) for k, loss_fn in loss_fns.items()}
 
     # return a combined fold entry that will go into a dataframe
-    return train_losses + validation_losses
+    retdict = {}
+    retdict.update(train_losses)
+    retdict.update(validation_losses)
+    return retdict
 
 
 def hyperparameter_eval(X, y,
                         splits_seed: int,
                         hparams_source: ParameterSearch,
+                        n_folds = 9,
                         experiment_name = 'opt',
-                        aim_record_dir = './'
+                        aim_record_dir = './',
+                        extras: Dict = None
                         ):
+    '''
+
+    Parameters
+    ----------
+    X - data to run the cross validation on
+    y - labels
+    splits_seed
+    hparams_source
+    n_folds
+    experiment_name
+    aim_record_dir
+    extras - a dictionary of dictionaries of other things to include in the logging with aim
+
+    Returns
+    -------
+
+    '''
 
     # generate the split of the train/test set
     X_train, y_train, X_test, y_test = minor_split(X, y, test_size=0.1, rs=splits_seed)
@@ -153,7 +174,7 @@ def hyperparameter_eval(X, y,
         # evaluate the hyperparameter set
         losses = train_one_cv(X_train,
                               y_train,
-                              hp, n_folds=9,
+                              hp, n_folds=n_folds,
                               random_seed_folds=splits_seed,
                               loss_fns={
                                   'roc_auc': roc_auc_score,
@@ -166,9 +187,13 @@ def hyperparameter_eval(X, y,
 
         # record the findings in aim
         run = Run(experiment=experiment_name,repo=aim_record_dir)
+        run['hparams'] = hp
+        if extras:
+            for key,val in extras.items():
+                run[key] = val
         for i, loss in enumerate(losses):  # the order of cv folds is deterministic with fixed seed
             for key, val in loss.items():
-                run.track(val, name=key, context={'subset': 'train', 'fold': i})
+                run.track(val, name=key, step=i, context={'subset': 'train'})
         run.close()
 
         # try to get the next hyperparams
@@ -186,7 +211,7 @@ def train_rfc_mgenfail(is_server: bool,
                        ):
     if is_server:
         hparam_ranges = {
-            'n_estimators': [5, 10, 20, 35, 50, 75, 100, 200,],
+            'n_estimators': [5, 10, 15, 20, 35, 50, 60, 75, 90, 100, 150, 200,],
             'random_state': [0xDEADBEEF, 0xBADACC, 228],
         }
         # initialize the first parameter server
@@ -196,10 +221,9 @@ def train_rfc_mgenfail(is_server: bool,
         hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
     else:
         df = load_processed_dataset(dataset, prefix)
-        df['descriptors'] = compute_descriptors(df.smiles, "")
-        X, y = get_dataset_as_numpy(df)
+        df['descriptors'] = compute_descriptors(df.smiles, descriptors)
 
-        X_mod, y_mod, X_data, y_data = prepare_major_splits(X, y)
+        X_mod, y_mod, X_data, y_data = prepare_major_splits(df)
 
         # connect ot the hyperparameter server
         hp_source = ParameterSearch(host=hosts['server'], port=hosts['port'])
@@ -209,8 +233,10 @@ def train_rfc_mgenfail(is_server: bool,
                             y_mod,
                             228,
                             hp_source,
+                            n_folds = n_folds,
                             experiment_name='OS_MODEL',
-                            aim_record_dir=prefix
+                            aim_record_dir=prefix,
+                            extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
                             )
         # the MCS model is a model with the same parameters as the OS model, but seeded differently
 

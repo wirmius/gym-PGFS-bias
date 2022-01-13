@@ -77,7 +77,7 @@ import signal
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 
-def define_search_grid(param_grid, output_file=None, port = 5555):
+def define_search_grid(param_grid, output_file=None):
     """Creates a grid search.
 
     param_grid: specifies the points in the grid. This uses the same format as GridSearchCV in sklearn, see
@@ -85,7 +85,7 @@ def define_search_grid(param_grid, output_file=None, port = 5555):
     output_file: A CSV file that will be used to store the results of a hyperparameter search (optional)
     Returns: a ParameterSearch object
     """
-    m = ParameterSearch(port=port, output_file=output_file)
+    m = ParameterSearch(output_file=output_file)
     for param_setting in ParameterGrid(param_grid):
         m.add_parameter_setting(param_setting)
     return m
