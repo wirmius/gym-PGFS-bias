@@ -216,9 +216,9 @@ class ParameterSearch(object):
         else:
             # work only under the lock here
             with self.database_lock:
-                self.attempts_left -= 1
-                if self.attempts_left < 0:
+                if self.attempts_left <= 0:
                     return None, None
+                self.attempts_left -= 1
 
                 # get the next suggested setting
                 job_id = self.trials.new_trial_ids(1)[0]
@@ -278,7 +278,7 @@ class ParameterSearch(object):
 
                 print('Running: ', self.running_jobs)
                 # print('Waiting: ', self.waiting_jobs)
-                if self.attempts_left < 0:
+                if self.attempts_left <= 0:
                     self.log.info("All jobs finished, sending server shutdown signal")
                     self.is_serving = False
 

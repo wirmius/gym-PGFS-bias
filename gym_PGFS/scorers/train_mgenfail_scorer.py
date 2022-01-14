@@ -154,7 +154,8 @@ def hyperparameter_eval(X, y,
                         experiment_name = 'opt',
                         aim_record_dir = './',
                         extras: Dict = None,
-                        loss_to_select: str = 'roc_auc'
+                        score_fns: dict = {'roc_auc': roc_auc_score},
+                        score_to_select: str = 'roc_auc'
                         ):
     '''
 
@@ -175,7 +176,7 @@ def hyperparameter_eval(X, y,
     '''
 
     # generate the split of the train/test set
-    X_train, y_train, X_test, y_test = minor_split(X, y, test_size=1/(1+n_folds), rs=splits_seed)
+    X_train, y_train, = X, y
 
     # enter the loop
     id, hp = hparams_source.get_next_setting()
@@ -184,11 +185,7 @@ def hyperparameter_eval(X, y,
         # quick and dirty fix to fix an error of floats being fed into integer params
         hp = {key: int(val) for key, val in hp.items()}
         # evaluate the hyperparameter set
-        loss_fns = {
-            'roc_auc': roc_auc_score,
-            'bal_acc': balanced_accuracy_score,
-            'accuracy': accuracy_score
-        }
+
         losses = train_one_cv(X_train,
                               y_train,
                               hp, n_folds=n_folds,
@@ -225,18 +222,38 @@ def hyperparameter_eval(X, y,
     return True
 
 
-def train_final_and_test(X, y, hparams, splits_seed: int, n_folds=9, loss_fn = roc_auc_score):
-    # generate the split of the train/test set
-    # seed identical to workers ensures we will get the same folds
-    X_train, y_train, X_test, y_test = minor_split(X, y, test_size=1/(1+n_folds), rs=splits_seed)
+def train_final_and_test(X_train, y_train,
+                         X_test, y_test,
+                         hparams,
+                         score_fns: dict = {'roc': roc_auc_score} ):
+
+    # quick and dirty fix to fix an error of floats being fed into integer params
+    hparams = {key: int(val) for key, val in hparams.items()}
 
     clf = RandomForestClassifier(**hparams)
     clf.fit(X_train, y_train)
-    ret_loss = loss_fn(y_test, clf.predict(X_test))
-    # now fit the classifier on the whole data
-    clf = RandomForestClassifier(**hparams)
-    clf.fit(X, y)
+    ret_loss = {name: score(y_test, clf.predict(X_test)) for name, score in score_fns}
     return ret_loss, clf
+
+
+def train_final_test_and_dump(X_train, y_train,
+                              X_test, y_test,
+                              prefix,
+                              best_params,
+                              score_fns: dict = {'roc': roc_auc_score} ):
+    score, clf = train_final_and_test(X_train, y_train,
+                                      X_test, y_test,
+                                      best_params,
+                                      score_fns=score_fns)
+    # log and print the best score
+    print(f"Best parameter set evaluated: {best_params}")
+    print(f"Resulting model has test scores of:\n {score}.")
+    # pickle the model and record the best parameter set
+    with open(prefix + '/model.pkl', 'wb') as f:
+        pickle.dump(clf, f)
+    with open(prefix + '/best_parameters.txt', 'wt') as f:
+        f.writelines([str(best_params), str(score)])
+    return score, clf
 
 
 
@@ -245,7 +262,7 @@ def train_rfc_mgenfail(is_server: bool,
                        prefix: str = './data/mgenfail_essays',
                        dataset: str = 'CHEMBL1909140',
                        descriptors: str = 'ECFP_2_1024',
-                       n_folds: int = 9,
+                       n_folds: int = 6,
                        n_tries: int = 1000,
                        worker_break = 60.,
                        ):
@@ -253,15 +270,25 @@ def train_rfc_mgenfail(is_server: bool,
     df['descriptors'] = compute_descriptors(df.smiles, descriptors)
 
     X_mod, y_mod, X_data, y_data = prepare_major_splits(df)
+    #
+    # print(X_mod.shape, y_mod.shape)
+    # print(X_mod.sum(), y_mod.sum())
+    # print(X_data.sum(), y_data.sum())
+
+    score_fns = {
+        'roc_auc': roc_auc_score,
+        'bal_acc': balanced_accuracy_score,
+        'accuracy': accuracy_score
+    }
+    select_by_score = 'roc_auc'
 
     # now change the prefix to be more specific
     prefix += '/' + dataset
 
     if is_server:
         hparams = {
-            'n_estimators': hp.quniform('n_estimators', 5, 250, 1),
-            'max_depth': hp.quniform('max_depth', 2, 10, 1),
-            'min_samples_leaf': hp.quniform('min_samples_leaf', 2, 5, 1),
+            'n_estimators': hp.quniform('n_estimators', 5, 100, 1),
+            'max_features': hp.quniform('max_features', 10, 30, 1),
             'random_state': 0xDEADBEEF
         }
         ensure_dir_exists(prefix)
@@ -270,54 +297,44 @@ def train_rfc_mgenfail(is_server: bool,
         ensure_dir_exists(prefix + '/MCS_MODEL')
         # initialize the first parameter server
         hp_server = ParameterSearch(space = hparams, rng = RandomState(553),
-                                    tries=n_tries, output_file=prefix+'/OS_MODEL/hyperparameter_log.txt')
+                                    tries = n_tries, output_file = prefix+'/OS_MODEL/hyperparameter_log.txt')
         # if server, then hosts is just an int with a port
         # start the server in the same thread, so that we know, when it runs out of parameters
         hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
 
         # get the best hyperparams, train the model, dump it where it should be
         os_best_params = hp_server.get_results()
-        os_score, os_clf = train_final_and_test(X_mod, y_mod, os_best_params, splits_seed=228, n_folds=9, loss_fn=roc_auc_score)
-        # log and print the best score
-        print(f"Best parameter set evaluated: {os_best_params}")
-        print(f"Resulting model has a score of {os_score}.")
-        # pickle the model and record the best parameter set
-        with open(prefix+'/OS_MODEL/model.pkl', 'wb') as f:
-            pickle.dump(os_clf, f)
-        with open(prefix + '/OS_MODEL/best_parameters.txt', 'wb') as f:
-            f.write(str(os_best_params))
+        train_final_test_and_dump(X_mod, y_mod,
+                                  X_data, y_data,
+                                  prefix + '/OS_MODEL',
+                                  os_best_params,
+                                  score_fns = score_fns
+                                  )
 
         # now train and dump the MCS model
         mcs_best_params = hp_server.get_results()
         # initialise the model randomly with a different seed
         mcs_best_params['random_state'] = np.random.randint(4096)
-        mcs_score, mcs_clf = train_final_and_test(X_mod, y_mod, mcs_best_params, splits_seed=228, n_folds=9, loss_fn=roc_auc_score)
-        # log and print the best score
-        print(f"Best parameter set evaluated: {mcs_best_params}")
-        print(f"Resulting model has a score of {mcs_score}.")
-        # pickle the model and record the best parameter set
-        with open(prefix+'/MCS_MODEL/model.pkl', 'wb') as f:
-            pickle.dump(mcs_clf, f)
-        with open(prefix + '/MCS_MODEL/best_parameters.txt', 'wb') as f:
-            f.write(str(mcs_best_params))
-
+        train_final_test_and_dump(X_mod, y_mod,
+                                  X_data, y_data,
+                                  prefix + '/MCS_MODEL',
+                                  mcs_best_params,
+                                  score_fns = score_fns
+                                  )
         # now proceed to train the DCS model
         # initialize the second parameter server
         hp_server = ParameterSearch(hparams, RandomState(553), n_tries, output_file=prefix+'/DCS_MODEL/hyperparameter_log.txt')
         # if server, then hosts is just an int with a port
         # start the server in the same thread, so that we know, when it runs out of parameters
         hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
-        # now train and dump the MCS model
+        # now train and dump the DCS model
         dcs_best_params = hp_server.get_results()
-        dcs_score, dcs_clf = train_final_and_test(X_data, y_data, dcs_best_params, splits_seed=228, n_folds=9, loss_fn=roc_auc_score)
-        # log and print the best score
-        print(f"Best parameter set evaluated: {dcs_best_params}")
-        print(f"Resulting model has a score of {dcs_score}.")
-        # pickle the model and record the best parameter set
-        with open(prefix+'/DCS_MODEL/model.pkl', 'wb') as f:
-            pickle.dump(dcs_clf, f)
-        with open(prefix + '/DCS_MODEL/best_parameters.txt', 'wb') as f:
-            f.write(str(dcs_best_params))
+        train_final_test_and_dump(X_data, y_data,
+                                  X_mod, y_mod,
+                                  prefix + '/DCS_MODEL',
+                                  dcs_best_params,
+                                  score_fns = score_fns
+                                  )
 
         # done
     else:
@@ -332,6 +349,8 @@ def train_rfc_mgenfail(is_server: bool,
                             n_folds = n_folds,
                             experiment_name='OS_MODEL',
                             aim_record_dir=prefix,
+                            score_fns=score_fns,
+                            score_to_select=select_by_score,
                             extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
                             )
         # skip a minute
@@ -345,5 +364,7 @@ def train_rfc_mgenfail(is_server: bool,
                             n_folds = n_folds,
                             experiment_name='DCS_MODEL',
                             aim_record_dir=prefix,
+                            score_fns=score_fns,
+                            score_to_select=select_by_score,
                             extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
                             )
