@@ -5,16 +5,18 @@ import pandas as pd
 
 from gym_PGFS.external.pollo1060.pipeliner_light.pipelines import ClassicPipe
 from gym_PGFS.external.pollo1060.pipeliner_light.smol import SMol
-from gym_PGFS.chemwrapped import Mol, ECFP6_bitvector_numpy
+from gym_PGFS.chemwrapped import Mol, ECFP6_bitvector_numpy, ChemMolToSmilesWrapper
 
 import os
 from typing import Union, Callable
 from functools import partial
+import pickle
 
 from gym_PGFS.datasets import get_fingerprint_fn, get_distance_fn
 from gym_PGFS.utils import ProbablyBadHeteroatomsError
 
 import abc
+from enum import Enum
 from typing import Tuple, Dict
 
 from gym_PGFS.constants import PGFS_MODULE_ROOT
@@ -146,69 +148,78 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
 
+class ScorerModeSelector(Enum):
+    OS_MODE = 0
+    MCS_MODE = 1
+    DCS_MODE = 2
+
+
 class MGenFailScorer(ScorerPGFS):
     def __init__(self,
-                 fp_len: int = 1024,
-                 fp_radius: int = 3,
+                 fp_fun: Callable,
+                 prefix='',
+                 dataset = '',
+                 transforms: list = [],
                  **kwargs):
-        # must have a chid
-        chid = kwargs['chid']
+        '''
 
+        Parameters
+        ----------
+        fp_fun
+        prefix
+        dataset
+        transforms
+            con contain 'center', 'proba'
+        kwargs
+        '''
+        os_model = prefix+'/'+dataset+'/OS_MODEL/model.pkl'
+        mcs_model = prefix+'/'+dataset+'/MCS_MODEL/model.pkl'
+        dcs_model = prefix+'/'+dataset+'/DCS_MODEL/model.pkl'
+        # load all three models
+        with open(os_model, 'rb') as f:
+            self.os_model = pickle.load(f)
+        # load all three models
+        with open(dcs_model, 'rb') as f:
+            self.dcs_model = pickle.load(f)
+        # load all three models
+        with open(mcs_model, 'rb') as f:
+            self.mcs_model = pickle.load(f)
 
-    def train_model(self):
+        # set other parameters
+        self.dataset_name = dataset
+        # fp fun is expected to take either smiles or Mol
+        self.fp_fun = fp_fun
+        # set the mode by default to optimisation score
+        self.mode = ScorerModeSelector.OS_MODE
 
-        # read data and calculate ecfp fingerprints
-        assay_file = f'./assays/processed/{chid}.csv'
-        print(f'Reading data from: {assay_file}')
-        df = pd.read_csv(assay_file)
-
-        df['ecfp'] = df['smiles'].apply(partial(ECFP6_bitvector_numpy(radius=fp_radius, size=fp_len)))
-        df1, df2 = train_test_split(df, test_size=0.5, stratify=df['label'])
-
-        X1 = np.array(list(df1['ecfp']))
-        X2 = np.array(list(df2['ecfp']))
-
-        y1 = np.array(list(df1['label']))
-        y2 = np.array(list(df2['label']))
-
-        del df1['ecfp']
-        del df2['ecfp']
-
-        balance = (np.mean(y1), np.mean(y2))
-
-        # train classifiers and store them in dictionary
-        clfs = {}
-        clfs['Split1'] = RandomForestClassifier(
-            n_estimators=n_estimators, n_jobs=n_jobs)
-        clfs['Split1'].fit(X1, y1)
-
-        clfs['Split1_alt'] = RandomForestClassifier(
-            n_estimators=n_estimators, n_jobs=n_jobs)
-        clfs['Split1_alt'].fit(X1, y1)
-
-        clfs['Split2'] = RandomForestClassifier(
-            n_estimators=n_estimators, n_jobs=n_jobs)
-        clfs['Split2'].fit(X2, y2)
-
-        # calculate AUCs for the clfs
-        aucs = {}
-        aucs['Split1'] = calc_auc(clfs['Split1'], X2, y2)
-        aucs['Split1_alt'] = calc_auc(clfs['Split1_alt'], X2, y2)
-        aucs['Split2'] = calc_auc(clfs['Split2'], X1, y1)
-        print("AUCs:")
-        for k, v in aucs.items():
-            print(f'{k}: {v}')
-
-        return clfs, aucs, balance, df1, df2
+        # initialize transforms
+        if 'center' in transforms:
+            self._transform = lambda a: a - 0.5
+        else:
+            self._transform = lambda a: a
 
     def get_id(self) -> str:
-        pass
+        return self.dataset_name
+
+    def get_mode(self) -> ScorerModeSelector:
+        return self.mode
+
+    def set_mode(self, mode: ScorerModeSelector):
+        self.mode = mode
 
     def score(self, mol: Union[Mol, str]) -> float:
-        pass
+        mol_desc = self.fp_fun(mol)
+        # use to predict probabilities to obtain a smoother objective
+        if self.mode == ScorerModeSelector.OS_MODE:
+            score = self.os_model.predict_proba(mol_desc)
+        elif self.mode == ScorerModeSelector.MCS_MODE:
+            score = self.mcs_model.predict_proba(mol_desc)
+        elif self.mode == ScorerModeSelector.DCS_MODE:
+            score = self.dcs_model.predict_proba(mol_desc)
+        return self._transform(score)
 
     def present_score(self, score: float) -> float:
-        pass
+        return score
 
 
 def get_scoring_function(type: str, **params) -> ScorerPGFS:
