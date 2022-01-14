@@ -1,3 +1,6 @@
+import pickle
+import time
+
 import pandas as pd
 import numpy as np
 import os
@@ -6,6 +9,7 @@ from typing import NamedTuple, Tuple, Dict, List, Union
 from functools import partial
 
 from gym_PGFS.datasets import get_fingerprint_fn
+from gym_PGFS.utils import ensure_dir_exists
 
 from numpy.random import RandomState
 from sklearn.model_selection import train_test_split, StratifiedKFold
@@ -13,9 +17,15 @@ from sklearn.metrics import roc_auc_score, balanced_accuracy_score, accuracy_sco
 from sklearn.ensemble import RandomForestClassifier
 
 from gym_PGFS.scorers.parametersearch import ParameterSearch, define_search_grid
+import pickle
 
 # logging
 from aim import Run
+
+# hyperopt
+from hyperopt import hp
+from hyperopt.base import STATUS_OK
+from collections import defaultdict
 
 
 def load_processed_dataset(chid: str, datadir: str) -> pd.DataFrame:
@@ -100,7 +110,8 @@ str
         )
 
         # save the results to the data
-        result_list.append(fold_outcome)
+        train_loss, val_loss = fold_outcome
+        result_list.append({'train': train_loss, 'validation': val_loss})
 
     return result_list
 
@@ -129,14 +140,11 @@ def train_one_fold(X: np.ndarray, y: np.ndarray,
     clf.fit(X, y)
 
     # compute the train and validation loss
-    train_losses = {"score.train_"+k: loss_fn(y, clf.predict(X)) for k, loss_fn in loss_fns.items()}
-    validation_losses = {"score.valid_"+k: loss_fn(y_valid, clf.predict(X_valid)) for k, loss_fn in loss_fns.items()}
+    train_losses = {k: loss_fn(y, clf.predict(X)) for k, loss_fn in loss_fns.items()}
+    validation_losses = {k: loss_fn(y_valid, clf.predict(X_valid)) for k, loss_fn in loss_fns.items()}
 
     # return a combined fold entry that will go into a dataframe
-    retdict = {}
-    retdict.update(train_losses)
-    retdict.update(validation_losses)
-    return retdict
+    return train_losses, validation_losses
 
 
 def hyperparameter_eval(X, y,
@@ -145,7 +153,8 @@ def hyperparameter_eval(X, y,
                         n_folds = 9,
                         experiment_name = 'opt',
                         aim_record_dir = './',
-                        extras: Dict = None
+                        extras: Dict = None,
+                        loss_to_select: str = 'roc_auc'
                         ):
     '''
 
@@ -166,40 +175,69 @@ def hyperparameter_eval(X, y,
     '''
 
     # generate the split of the train/test set
-    X_train, y_train, X_test, y_test = minor_split(X, y, test_size=0.1, rs=splits_seed)
+    X_train, y_train, X_test, y_test = minor_split(X, y, test_size=1/(1+n_folds), rs=splits_seed)
 
     # enter the loop
     id, hp = hparams_source.get_next_setting()
+
     while id is not None and hp is not None:
+        # quick and dirty fix to fix an error of floats being fed into integer params
+        hp = {key: int(val) for key, val in hp.items()}
         # evaluate the hyperparameter set
+        loss_fns = {
+            'roc_auc': roc_auc_score,
+            'bal_acc': balanced_accuracy_score,
+            'accuracy': accuracy_score
+        }
         losses = train_one_cv(X_train,
                               y_train,
                               hp, n_folds=n_folds,
                               random_seed_folds=splits_seed,
-                              loss_fns={
-                                  'roc_auc': roc_auc_score,
-                                  'bal_acc': balanced_accuracy_score,
-                                  'accuracy': accuracy_score
-                              })
-
-        # return the results to the hyperparameter server
-        hparams_source.submit_result(id, losses)
+                              loss_fns = loss_fns)
 
         # record the findings in aim
-        run = Run(experiment=experiment_name,repo=aim_record_dir)
+        run = Run(experiment=experiment_name, repo=aim_record_dir)
         run['hparams'] = hp
         if extras:
-            for key,val in extras.items():
+            for key, val in extras.items():
                 run[key] = val
-        for i, loss in enumerate(losses):  # the order of cv folds is deterministic with fixed seed
-            for key, val in loss.items():
-                run.track(val, name=key, step=i, context={'subset': 'train'})
+
+        track = defaultdict(int)
+        for key in loss_fns.keys():
+            for i, loss in enumerate(losses):  # the order of cv folds is deterministic with fixed seed
+                train_loss = loss['train']
+                val_loss = loss['validation']
+                track['train_mean_' + key] += train_loss[key] / len(losses)
+                track['valid_mean_' + key] += val_loss[key] / len(losses)
+
+                run.track(train_loss[key], key, step=i, context={'metric_over': 'train'})
+                run.track(val_loss[key], key, step=i, context={'metric_over': 'valid'})
+        for key, val in track.items():
+            run.track(val, key, context={'metric_over': 'mean'})
         run.close()
+
+        # return the results to the hyperparameter server
+        hparams_source.submit_result(id, {'loss': 1-track['valid_mean_'+loss_to_select], 'status': STATUS_OK})
 
         # try to get the next hyperparams
         id, hp = hparams_source.get_next_setting()
 
     return True
+
+
+def train_final_and_test(X, y, hparams, splits_seed: int, n_folds=9, loss_fn = roc_auc_score):
+    # generate the split of the train/test set
+    # seed identical to workers ensures we will get the same folds
+    X_train, y_train, X_test, y_test = minor_split(X, y, test_size=1/(1+n_folds), rs=splits_seed)
+
+    clf = RandomForestClassifier(**hparams)
+    clf.fit(X_train, y_train)
+    ret_loss = loss_fn(y_test, clf.predict(X_test))
+    # now fit the classifier on the whole data
+    clf = RandomForestClassifier(**hparams)
+    clf.fit(X, y)
+    return ret_loss, clf
+
 
 
 def train_rfc_mgenfail(is_server: bool,
@@ -208,36 +246,104 @@ def train_rfc_mgenfail(is_server: bool,
                        dataset: str = 'CHEMBL1909140',
                        descriptors: str = 'ECFP_2_1024',
                        n_folds: int = 9,
+                       n_tries: int = 1000,
+                       worker_break = 60.,
                        ):
+    df = load_processed_dataset(dataset, prefix)
+    df['descriptors'] = compute_descriptors(df.smiles, descriptors)
+
+    X_mod, y_mod, X_data, y_data = prepare_major_splits(df)
+
+    # now change the prefix to be more specific
+    prefix += '/' + dataset
+
     if is_server:
-        hparam_ranges = {
-            'n_estimators': [5, 10, 15, 20, 35, 50, 60, 75, 90, 100, 150, 200,],
-            'random_state': [0xDEADBEEF, 0xBADACC, 228],
+        hparams = {
+            'n_estimators': hp.quniform('n_estimators', 5, 250, 1),
+            'max_depth': hp.quniform('max_depth', 2, 10, 1),
+            'min_samples_leaf': hp.quniform('min_samples_leaf', 2, 5, 1),
+            'random_state': 0xDEADBEEF
         }
+        ensure_dir_exists(prefix)
+        ensure_dir_exists(prefix + '/OS_MODEL')
+        ensure_dir_exists(prefix + '/DCS_MODEL')
+        ensure_dir_exists(prefix + '/MCS_MODEL')
         # initialize the first parameter server
-        hp_server = define_search_grid(hparam_ranges, prefix+'/OS_SCORE')
+        hp_server = ParameterSearch(space = hparams, rng = RandomState(553),
+                                    tries=n_tries, output_file=prefix+'/OS_MODEL/hyperparameter_log.txt')
         # if server, then hosts is just an int with a port
         # start the server in the same thread, so that we know, when it runs out of parameters
         hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
+
+        # get the best hyperparams, train the model, dump it where it should be
+        os_best_params = hp_server.get_results()
+        os_score, os_clf = train_final_and_test(X_mod, y_mod, os_best_params, splits_seed=228, n_folds=9, loss_fn=roc_auc_score)
+        # log and print the best score
+        print(f"Best parameter set evaluated: {os_best_params}")
+        print(f"Resulting model has a score of {os_score}.")
+        # pickle the model and record the best parameter set
+        with open(prefix+'/OS_MODEL/model.pkl', 'wb') as f:
+            pickle.dump(os_clf, f)
+        with open(prefix + '/OS_MODEL/best_parameters.txt', 'wb') as f:
+            f.write(str(os_best_params))
+
+        # now train and dump the MCS model
+        mcs_best_params = hp_server.get_results()
+        # initialise the model randomly with a different seed
+        mcs_best_params['random_state'] = np.random.randint(4096)
+        mcs_score, mcs_clf = train_final_and_test(X_mod, y_mod, mcs_best_params, splits_seed=228, n_folds=9, loss_fn=roc_auc_score)
+        # log and print the best score
+        print(f"Best parameter set evaluated: {mcs_best_params}")
+        print(f"Resulting model has a score of {mcs_score}.")
+        # pickle the model and record the best parameter set
+        with open(prefix+'/MCS_MODEL/model.pkl', 'wb') as f:
+            pickle.dump(mcs_clf, f)
+        with open(prefix + '/MCS_MODEL/best_parameters.txt', 'wb') as f:
+            f.write(str(mcs_best_params))
+
+        # now proceed to train the DCS model
+        # initialize the second parameter server
+        hp_server = ParameterSearch(hparams, RandomState(553), n_tries, output_file=prefix+'/DCS_MODEL/hyperparameter_log.txt')
+        # if server, then hosts is just an int with a port
+        # start the server in the same thread, so that we know, when it runs out of parameters
+        hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
+        # now train and dump the MCS model
+        dcs_best_params = hp_server.get_results()
+        dcs_score, dcs_clf = train_final_and_test(X_data, y_data, dcs_best_params, splits_seed=228, n_folds=9, loss_fn=roc_auc_score)
+        # log and print the best score
+        print(f"Best parameter set evaluated: {dcs_best_params}")
+        print(f"Resulting model has a score of {dcs_score}.")
+        # pickle the model and record the best parameter set
+        with open(prefix+'/DCS_MODEL/model.pkl', 'wb') as f:
+            pickle.dump(dcs_clf, f)
+        with open(prefix + '/DCS_MODEL/best_parameters.txt', 'wb') as f:
+            f.write(str(dcs_best_params))
+
+        # done
     else:
-        df = load_processed_dataset(dataset, prefix)
-        df['descriptors'] = compute_descriptors(df.smiles, descriptors)
-
-        X_mod, y_mod, X_data, y_data = prepare_major_splits(df)
-
         # connect ot the hyperparameter server
         hp_source = ParameterSearch(host=hosts['server'], port=hosts['port'])
 
         # train the OS model
         hyperparameter_eval(X_mod,
                             y_mod,
-                            228,
-                            hp_source,
+                            splits_seed=228,
+                            hparams_source=hp_source,
                             n_folds = n_folds,
                             experiment_name='OS_MODEL',
                             aim_record_dir=prefix,
                             extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
                             )
-        # the MCS model is a model with the same parameters as the OS model, but seeded differently
+        # skip a minute
+        time.sleep(worker_break)
 
-        # TODO: train the DS model
+        # go on to optimise the Data Control Model
+        hyperparameter_eval(X_data,
+                            y_data,
+                            splits_seed=228,
+                            hparams_source=hp_source,
+                            n_folds = n_folds,
+                            experiment_name='DCS_MODEL',
+                            aim_record_dir=prefix,
+                            extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
+                            )

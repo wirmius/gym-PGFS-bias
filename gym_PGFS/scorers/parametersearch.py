@@ -68,11 +68,15 @@ import struct
 import socketserver
 import threading
 
-import pandas as pd
-from aim import Run
 from sklearn.model_selection import ParameterGrid
 import time
 import signal
+
+# hyperopt
+import numpy as np
+from hyperopt import hp, space_eval
+from hyperopt.tpe import suggest
+from hyperopt.base import Trials, Domain, STATUS_STRINGS, STATUS_OK, STATUS_FAIL
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
@@ -101,7 +105,8 @@ class ParameterSearch(object):
     necessarily coincide with the order in which they are handed out.
     """
 
-    def __init__(self, host=None, port=None, output_file=None,):
+    def __init__(self, space: dict = None, rng: np.random.RandomState = None, tries: int = 100,
+                 host=None, port=None, output_file=None,):
         """Creates a new ParameterSearch instance.
 
         If this is a client instance that gets its parameters from a remote instance, specify their host/port here.
@@ -109,7 +114,9 @@ class ParameterSearch(object):
         host: host name or IP address of server ParameterSearch instance (optional, also requires a port)
         port: port of server ParameterSearch instance port (optional, also requires a host)
         output_file: A CSV file that will be used to store the results of a hyperparameter search
-        name: the name of the experiment to be conducted
+        space: hyperopt compatible search space
+        rng: a RandomState
+        tries: total number of attempts that will be made
         """
         self.waiting_jobs = []
         self.running_jobs = []
@@ -126,8 +133,14 @@ class ParameterSearch(object):
 
         self.is_client = host is not None and port is not None
         if not self.is_client:
-            self.database = Database()
+            # self.database = Database()
             self.database_lock = threading.Lock()
+            # initialize the hyperopt parameters
+            self.attempts_left = tries
+            self.rng = rng
+            self.space = space
+            self.domain = Domain(None, self.space,)
+            self.trials = Trials()
         else:
             self.host = socket.gethostbyname(host)
             self.port = port
@@ -137,8 +150,10 @@ class ParameterSearch(object):
 
         setting: a dictionary that maps setting-names to the values they take
         """
-        job = self.database.add_job(setting)
-        self.waiting_jobs.append(job.id)
+        # useless when using hyperopt
+        raise NotImplementedError()
+        # job = self.database.add_job(setting)
+        # self.waiting_jobs.append(job.id)
 
     def start_server(self, host, port, as_thread=False):
         """Starts accepting remote requests for jobs and waits for replies.
@@ -177,8 +192,9 @@ class ParameterSearch(object):
             return job_id, params
 
     def get_results(self):
-        assert not self.is_client, "Clients don't have access to the result list"
-        return list(self.database.get_all_jobs())
+        return self.trials.argmin
+        # assert not self.is_client, "Clients don't have access to the result list"
+        # return list(self.database.get_all_jobs())
 
     def get_next_setting(self):
         """Gets the next untried hyperparameter setting.
@@ -197,15 +213,31 @@ class ParameterSearch(object):
             if job_id is not None:
                 self.working_jobs.append(job_id)
             return job_id, data
+        else:
+            # work only under the lock here
+            with self.database_lock:
+                self.attempts_left -= 1
+                if self.attempts_left < 0:
+                    return None, None
 
-        if not self.waiting_jobs:
-            return None, None
+                # get the next suggested setting
+                job_id = self.trials.new_trial_ids(1)[0]
+                next = suggest([job_id], self.domain, self.trials, seed=self.rng.randint(4096))
 
-        with self.database_lock:
-            job_id = self.waiting_jobs.pop(0)
-            self.running_jobs.append(job_id)
-            job = self.database.get_job(job_id)
-        return job.id, job.data
+                # add to the trials
+                self.trials.insert_trial_docs(next)
+                self.trials.refresh()
+
+                # send for evaluation (assume just one thing in there)
+                data = next[0]['misc']['vals']
+                # alter the format to a nicer one
+                data = {key: val[0] for key, val in data.items()}
+
+                # job_id = self.waiting_jobs.pop(0)
+                self.running_jobs.append(job_id)
+                # job = self.database.get_job(job_id)
+            #return job.id, job.data
+            return job_id, data
 
     def submit_result(self, job_id, result):
         """
@@ -225,21 +257,30 @@ class ParameterSearch(object):
                     raise RuntimeError("Job not running.")
 
                 self.running_jobs.remove(job_id)
+                # to make sure no funny mismatching happens undetected
+                assert self.trials.trials[job_id]['tid'] == job_id
 
-                # TODO: establish a better error feedback
-                if result == -1:
-                    self.log.info(f"job failed, job {job_id}: reattaching to waiting jobs")
-                    self.waiting_jobs.append(job_id)
+                # now we assume that the result is a loss, that is minimized
+                # contained within a dictionary
+                # as per the hyperopt standard {'loss': x, 'status': 'ok'}
+                if not isinstance(result, dict):
+                    self.log.error(f"job failed, job {job_id}: reattaching to waiting jobs")
+                    self.trials.trials[job_id]['result']['status'] = STATUS_FAIL
                 else:
-                    self.database.complete_job(job_id, result)
+                    self.trials.trials[job_id]['result'] = result
 
+                # # TODO: establish a better error feedback
+                # if result == -1:
+                #     self.log.info(f"job failed, job {job_id}: reattaching to waiting jobs")
+                #     self.waiting_jobs.append(job_id)
+                # else:
+                #     self.database.complete_job(job_id, result)
 
-
-            print('Running: ', self.running_jobs)
-            print('Waiting: ', self.waiting_jobs)
-            if not self.running_jobs and not self.waiting_jobs:
-                self.log.info("All jobs finished, sending server shutdown signal")
-                self.is_serving = False
+                print('Running: ', self.running_jobs)
+                # print('Waiting: ', self.waiting_jobs)
+                if self.attempts_left < 0:
+                    self.log.info("All jobs finished, sending server shutdown signal")
+                    self.is_serving = False
 
     def _submit_remote_job(self, job_id, result):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
