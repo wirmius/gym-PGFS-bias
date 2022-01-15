@@ -368,3 +368,23 @@ def train_rfc_mgenfail(is_server: bool,
                             score_to_select=select_by_score,
                             extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
                             )
+
+if __name__ == '__main__':
+    from sys import argv
+
+    if not argv[1] in ['server', 'client']:
+        raise ValueError("must specify the role correctly: either server or client")
+    is_server = argv[1] == 'server'
+    assay = argv[2]
+    n_folds = int(argv[3])
+    host = argv[4]
+    port = int(argv[5])
+    # example usage (in the root of the package):
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL1909140 6 127.0.0.1 5533
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909140 6 127.0.0.1 5533
+
+    train_rfc_mgenfail(is_server,
+                       dataset=assay,
+                       hosts={'server': '127.0.0.1', 'port': 5555},
+                       n_tries=n_folds
+                       )
