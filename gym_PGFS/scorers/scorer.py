@@ -97,6 +97,7 @@ class PipelinerScorer(ScorerPGFS):
 
         # load the models
         self.pipeline = ClassicPipe.load(os.path.join(PGFS_MODULE_ROOT, f'external/pollo1060/Models/{self.name}'))
+        # TODO: turn transforms into a list
         if self.transform == "none":
             self._transform = lambda a: a
         elif self.transform == "norm":
@@ -144,9 +145,6 @@ class PipelinerScorer(ScorerPGFS):
     def present_score(self, score: float):
         return score * self.std + self.mean if self.transform.startswith("norm") else score
 
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score
-from sklearn.ensemble import RandomForestClassifier
 
 class ScorerModeSelector(Enum):
     OS_MODE = 0
@@ -155,23 +153,28 @@ class ScorerModeSelector(Enum):
 
 
 class MGenFailScorer(ScorerPGFS):
-    def __init__(self,
-                 fp_fun: Union[Callable, str],
-                 prefix='./data/mgenfail_ass',
-                 dataset = 'CHEMBL1909203',
-                 transforms: list = [],
-                 **kwargs):
+    def __init__(self, **kwargs):
         '''
-
+        fp_fun: str,
+        prefix='./data/mgenfail_assays',
+        dataset = 'CHEMBL1909203',
+        transforms: list = [],
         Parameters
         ----------
         fp_fun
         prefix
         dataset
         transforms
-            con contain 'center', 'proba'
+            can contain 'center', 'proba'
+            'proba' is actually there by default
         kwargs
         '''
+        dataset = kwargs['name']
+        fp_fun = kwargs['fingerprints_used']
+        prefix = kwargs['mgenfail_data_prefix']
+        transforms = kwargs['transforms']
+
+
         os_model = prefix+'/'+dataset+'/OS_MODEL/model.pkl'
         mcs_model = prefix+'/'+dataset+'/MCS_MODEL/model.pkl'
         dcs_model = prefix+'/'+dataset+'/DCS_MODEL/model.pkl'
@@ -187,12 +190,11 @@ class MGenFailScorer(ScorerPGFS):
 
         # set other parameters
         self.dataset_name = dataset
+
         # fp fun is expected to take either smiles or Mol
-        if isinstance(fp_fun, Callable):
-            self.fp_fun = fp_fun
-        else:
-            fn, params = get_fingerprint_fn(fp_fun)
-            self.fp_fun = partial(fn, **params)
+        fn, params = get_fingerprint_fn(fp_fun)
+        self.fp_fun = partial(fn, **params)
+
         # set the mode by default to optimisation score
         self.mode = ScorerModeSelector.OS_MODE
 
