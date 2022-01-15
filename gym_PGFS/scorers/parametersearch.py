@@ -278,7 +278,7 @@ class ParameterSearch(object):
 
                 print('Running: ', self.running_jobs)
                 # print('Waiting: ', self.waiting_jobs)
-                if self.attempts_left <= 0:
+                if self.attempts_left <= 0 and len(self.running_jobs) == 0:
                     self.log.info("All jobs finished, sending server shutdown signal")
                     self.is_serving = False
 

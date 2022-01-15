@@ -28,6 +28,10 @@ from hyperopt.base import STATUS_OK
 from collections import defaultdict
 
 
+def calc_auc(y_test, y_pred_prob):
+    return roc_auc_score(y_test, y_pred_prob[:, 1])
+
+
 def load_processed_dataset(chid: str, datadir: str) -> pd.DataFrame:
     assay_file = os.path.join(datadir, f'processed/{chid}.csv')
     return pd.read_csv(assay_file)
@@ -53,13 +57,18 @@ def get_dataset_as_numpy(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     return np.stack(df.descriptors.to_list()), df.label.to_numpy()
 
 
-def prepare_major_splits(df: pd.DataFrame, rs: Union[RandomState, int] = 0) -> Dict:
+def prepare_major_splits(df: pd.DataFrame, rs: Union[RandomState, int] = 0) -> Tuple[np.ndarray]:
     df1, df2 = train_test_split(df, test_size=0.5, stratify=df['label'], random_state=rs)
 
     X_models, y_models = get_dataset_as_numpy(df1)
     X_data, y_data = get_dataset_as_numpy(df2)
 
     return X_models, y_models, X_data, y_data
+
+
+def prepare_major_splits_df(df: pd.DataFrame, rs: Union[RandomState, int] = 0) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    df1, df2 = train_test_split(df, test_size=0.5, stratify=df['label'], random_state=rs)
+    return df1, df2
 
 
 def minor_split(X, y, test_size = 0.1, rs: Union[RandomState, int] = 228):
@@ -140,8 +149,8 @@ def train_one_fold(X: np.ndarray, y: np.ndarray,
     clf.fit(X, y)
 
     # compute the train and validation loss
-    train_losses = {k: score_fn(y, clf.predict(X)) for k, score_fn in score_fns.items()}
-    validation_losses = {k: score_fn(y_valid, clf.predict(X_valid)) for k, score_fn in score_fns.items()}
+    train_losses = {k: (score_fn(y, clf.predict(X)) if not k.startswith("probs_") else score_fn(y, clf.predict_proba(X))) for k, score_fn in score_fns.items()}
+    validation_losses = {k: (score_fn(y_valid, clf.predict(X_valid)) if not k.startswith("probs_") else score_fn(y_valid, clf.predict_proba(X_valid))) for k, score_fn in score_fns.items()}
 
     # return a combined fold entry that will go into a dataframe
     return train_losses, validation_losses
@@ -232,7 +241,10 @@ def train_final_and_test(X_train, y_train,
 
     clf = RandomForestClassifier(**hparams)
     clf.fit(X_train, y_train)
-    ret_loss = {name: score(y_test, clf.predict(X_test)) for name, score in score_fns}
+    ret_loss = {name:
+                    (score(y_test, clf.predict(X_test)) if not name.startswith("probs_")
+                     else score(y_test, clf.predict_proba(X_test)))
+                for name, score in score_fns.items()}
     return ret_loss, clf
 
 
@@ -259,6 +271,7 @@ def train_final_test_and_dump(X_train, y_train,
 
 def train_rfc_mgenfail(is_server: bool,
                        hosts: Dict,
+                       train_target: str,
                        prefix: str = './data/mgenfail_essays',
                        dataset: str = 'CHEMBL1909140',
                        descriptors: str = 'ECFP_2_1024',
@@ -266,10 +279,6 @@ def train_rfc_mgenfail(is_server: bool,
                        n_tries: int = 1000,
                        worker_break = 60.,
                        ):
-    df = load_processed_dataset(dataset, prefix)
-    df['descriptors'] = compute_descriptors(df.smiles, descriptors)
-
-    X_mod, y_mod, X_data, y_data = prepare_major_splits(df)
     #
     # print(X_mod.shape, y_mod.shape)
     # print(X_mod.sum(), y_mod.sum())
@@ -278,96 +287,145 @@ def train_rfc_mgenfail(is_server: bool,
     score_fns = {
         'roc_auc': roc_auc_score,
         'bal_acc': balanced_accuracy_score,
-        'accuracy': accuracy_score
+        'accuracy': accuracy_score,
+        'probs_roc_auc': calc_auc,
     }
-    select_by_score = 'roc_auc'
+    select_by_score = 'probs_roc_auc'
 
     # now change the prefix to be more specific
+    prefix_ = prefix
     prefix += '/' + dataset
 
     if is_server:
+        # define the hyperparameter grid
         hparams = {
-            'n_estimators': hp.quniform('n_estimators', 5, 100, 1),
+            'n_estimators': hp.quniform('n_estimators', 10, 150, 1),
             'max_features': hp.quniform('max_features', 10, 30, 1),
             'random_state': 0xDEADBEEF
         }
+        # make sure that our prefix exists
         ensure_dir_exists(prefix)
-        ensure_dir_exists(prefix + '/OS_MODEL')
-        ensure_dir_exists(prefix + '/DCS_MODEL')
-        ensure_dir_exists(prefix + '/MCS_MODEL')
-        # initialize the first parameter server
-        hp_server = ParameterSearch(space = hparams, rng = RandomState(553),
-                                    tries = n_tries, output_file = prefix+'/OS_MODEL/hyperparameter_log.txt')
-        # if server, then hosts is just an int with a port
-        # start the server in the same thread, so that we know, when it runs out of parameters
-        hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
 
-        # get the best hyperparams, train the model, dump it where it should be
-        os_best_params = hp_server.get_results()
-        train_final_test_and_dump(X_mod, y_mod,
-                                  X_data, y_data,
-                                  prefix + '/OS_MODEL',
-                                  os_best_params,
-                                  score_fns = score_fns
-                                  )
+        if not (os.path.exists(prefix+'/MCS_SPLIT.csv') and prefix + '/DCS_SPLIT.csv'):
+            # generate the splits for the mcs and dcs
+            df = load_processed_dataset(dataset, prefix_)
+            df['descriptors'] = compute_descriptors(df.smiles, descriptors)
+            mcs_half, dcs_half = prepare_major_splits_df(df, 228228)
+            # dump the splits
+            mcs_half.to_csv(prefix+'/MCS_SPLIT.csv')
+            dcs_half.to_csv(prefix + '/DCS_SPLIT.csv')
 
-        # now train and dump the MCS model
-        mcs_best_params = hp_server.get_results()
-        # initialise the model randomly with a different seed
-        mcs_best_params['random_state'] = np.random.randint(4096)
-        train_final_test_and_dump(X_mod, y_mod,
-                                  X_data, y_data,
-                                  prefix + '/MCS_MODEL',
-                                  mcs_best_params,
-                                  score_fns = score_fns
-                                  )
-        # now proceed to train the DCS model
-        # initialize the second parameter server
-        hp_server = ParameterSearch(hparams, RandomState(553), n_tries, output_file=prefix+'/DCS_MODEL/hyperparameter_log.txt')
-        # if server, then hosts is just an int with a port
-        # start the server in the same thread, so that we know, when it runs out of parameters
-        hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
-        # now train and dump the DCS model
-        dcs_best_params = hp_server.get_results()
-        train_final_test_and_dump(X_data, y_data,
-                                  X_mod, y_mod,
-                                  prefix + '/DCS_MODEL',
-                                  dcs_best_params,
-                                  score_fns = score_fns
-                                  )
+        if train_target == 'OS_MCS':
+            # make sure all the directories exist
+            ensure_dir_exists(prefix + '/OS_MODEL')
+            ensure_dir_exists(prefix + '/MCS_MODEL')
 
-        # done
+            # load the datasets (mcs as train and dcs as test)
+            df1 = pd.read_csv(prefix + '/MCS_SPLIT.csv')
+            df1['descriptors'] = compute_descriptors(df1.smiles, descriptors)
+            X_train, y_train = get_dataset_as_numpy(df1)
+            df2 = pd.read_csv(prefix + '/DCS_SPLIT.csv')
+            df2['descriptors'] = compute_descriptors(df2.smiles, descriptors)
+            X_test, y_test = get_dataset_as_numpy(df2)
+
+            # initialize the first parameter server
+            hp_server = ParameterSearch(space = hparams, rng = RandomState(553),
+                                        tries = n_tries, output_file = prefix+'/OS_MODEL/hyperparameter_log.txt')
+            # if server, then hosts is just an int with a port
+            # start the server in the same thread, so that we know, when it runs out of parameters
+            try:
+                hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
+            except BaseException as e:
+                print(f"caught exception {e}, severing connections and continuing.")
+
+            # get the best hyperparams, train the model, dump it where it should be
+            os_best_params = hp_server.get_results()
+            train_final_test_and_dump(X_train, y_train,
+                                      X_test, y_test,
+                                      prefix + '/OS_MODEL',
+                                      os_best_params,
+                                      score_fns = score_fns
+                                      )
+
+            # now train and dump the MCS model
+            mcs_best_params = hp_server.get_results()
+            # initialise the model randomly with a different seed
+            mcs_best_params['random_state'] = np.random.randint(4096)
+            train_final_test_and_dump(X_train, y_train,
+                                      X_test, y_test,
+                                      prefix + '/MCS_MODEL',
+                                      mcs_best_params,
+                                      score_fns = score_fns
+                                      )
+        elif train_target == 'DCS':
+            ensure_dir_exists(prefix + '/DCS_MODEL')
+            # load the datasets (dcs as train and mcs as test)
+            df1 = pd.read_csv(prefix + '/MCS_SPLIT.csv')
+            df1['descriptors'] = compute_descriptors(df1.smiles, descriptors)
+            X_test, y_test = get_dataset_as_numpy(df1)
+            df2 = pd.read_csv(prefix + '/DCS_SPLIT.csv')
+            df2['descriptors'] = compute_descriptors(df2.smiles, descriptors)
+            X_train, y_train = get_dataset_as_numpy(df2)
+
+            # initialize the second parameter server
+            hp_server = ParameterSearch(hparams, RandomState(553), n_tries, output_file=prefix+'/DCS_MODEL/hyperparameter_log.txt')
+            # if server, then hosts is just an int with a port
+            # start the server in the same thread, so that we know, when it runs out of parameters
+            try:
+                hp_server.start_server(hosts['server'], hosts['port'], as_thread=False)
+            except BaseException as e:
+                print(f"caught exception {e}, severing connections and continuing.")
+            # now train and dump the DCS model
+            dcs_best_params = hp_server.get_results()
+            train_final_test_and_dump(X_train, y_train,
+                                      X_test, y_test,
+                                      prefix + '/DCS_MODEL',
+                                      dcs_best_params,
+                                      score_fns = score_fns
+                                      )
+        else:
+            raise ValueError("What should I optimise, huh?")
     else:
         # connect ot the hyperparameter server
         hp_source = ParameterSearch(host=hosts['server'], port=hosts['port'])
 
-        # train the OS model
-        hyperparameter_eval(X_mod,
-                            y_mod,
-                            splits_seed=228,
-                            hparams_source=hp_source,
-                            n_folds = n_folds,
-                            experiment_name='OS_MODEL',
-                            aim_record_dir=prefix,
-                            score_fns=score_fns,
-                            score_to_select=select_by_score,
-                            extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
-                            )
-        # skip a minute
-        time.sleep(worker_break)
+        if train_target == 'OS_MCS':
+            df1 = pd.read_csv(prefix + '/MCS_SPLIT.csv')
+            df1['descriptors'] = compute_descriptors(df1.smiles, descriptors)
+            X_train, y_train = get_dataset_as_numpy(df1)
 
-        # go on to optimise the Data Control Model
-        hyperparameter_eval(X_data,
-                            y_data,
-                            splits_seed=228,
-                            hparams_source=hp_source,
-                            n_folds = n_folds,
-                            experiment_name='DCS_MODEL',
-                            aim_record_dir=prefix,
-                            score_fns=score_fns,
-                            score_to_select=select_by_score,
-                            extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
-                            )
+            # train the OS model
+            hyperparameter_eval(X_train,
+                                y_train,
+                                splits_seed=228,
+                                hparams_source=hp_source,
+                                n_folds = n_folds,
+                                experiment_name='OS_MODEL',
+                                aim_record_dir=prefix,
+                                score_fns=score_fns,
+                                score_to_select=select_by_score,
+                                extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
+                                )
+        elif train_target == 'DCS':
+            # go on to optimise the Data Control Model
+            df2 = pd.read_csv(prefix + '/DCS_SPLIT.csv')
+            df2['descriptors'] = compute_descriptors(df2.smiles, descriptors)
+            X_train, y_train = get_dataset_as_numpy(df2)
+
+            hyperparameter_eval(X_train,
+                                y_train,
+                                splits_seed=228,
+                                hparams_source=hp_source,
+                                n_folds = n_folds,
+                                experiment_name='DCS_MODEL',
+                                aim_record_dir=prefix,
+                                score_fns=score_fns,
+                                score_to_select=select_by_score,
+                                extras={'dataset': {'name': dataset, 'descriptors': descriptors}}
+                                )
+        else:
+            raise ValueError("What should I optimise, huh?")
+
 
 if __name__ == '__main__':
     from sys import argv
@@ -380,12 +438,23 @@ if __name__ == '__main__':
     n_tries = int(argv[4])
     host = argv[5]
     port = int(argv[6])
+    train_model = argv[7]   # OS_MCS or DCS
     # example usage (in the root of the package):
-    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL1909140 6 3000 127.0.0.1 5533
-    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909140 6 3000 127.0.0.1 5533
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL1909140 6 3000 127.0.0.1 5533 OS_MCS
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909140 6 3000 127.0.0.1 5533 OS_MCS
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909140 6 3000 127.0.0.1 5533 DCS
+
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL1909203 6 500 127.0.0.1 5533 OS_MCS
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909203 6 500 127.0.0.1 5533 OS_MCS
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909203 6 500 127.0.0.1 5533 DCS
+
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL3888429 6 500 127.0.0.1 5533 OS_MCS
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL3888429 6 500 127.0.0.1 5533 OS_MCS
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL3888429 6 500 127.0.0.1 5533 DCS
 
     train_rfc_mgenfail(is_server,
                        dataset=assay,
+                       train_target=train_model,
                        hosts={'server': '127.0.0.1', 'port': 5555},
                        n_tries=n_tries,
                        n_folds=n_folds
