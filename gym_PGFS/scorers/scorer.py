@@ -156,9 +156,9 @@ class ScorerModeSelector(Enum):
 
 class MGenFailScorer(ScorerPGFS):
     def __init__(self,
-                 fp_fun: Callable,
-                 prefix='',
-                 dataset = '',
+                 fp_fun: Union[Callable, str],
+                 prefix='./data/mgenfail_ass',
+                 dataset = 'CHEMBL1909203',
                  transforms: list = [],
                  **kwargs):
         '''
@@ -188,7 +188,11 @@ class MGenFailScorer(ScorerPGFS):
         # set other parameters
         self.dataset_name = dataset
         # fp fun is expected to take either smiles or Mol
-        self.fp_fun = fp_fun
+        if isinstance(fp_fun, Callable):
+            self.fp_fun = fp_fun
+        else:
+            fn, params = get_fingerprint_fn(fp_fun)
+            self.fp_fun = partial(fn, **params)
         # set the mode by default to optimisation score
         self.mode = ScorerModeSelector.OS_MODE
 
@@ -209,13 +213,18 @@ class MGenFailScorer(ScorerPGFS):
 
     def score(self, mol: Union[Mol, str]) -> float:
         mol_desc = self.fp_fun(mol)
+        if not isinstance(mol_desc, np.ndarray):
+            raise ValueError(f'Descriptor returned to scoring function is not an ndarray, is of type {type(mol_desc)}')
+        elif len(mol_desc.shape) == 1:
+            # reshape to let it be used by the random forest if just one sample
+            mol_desc = mol_desc[np.newaxis, :]
         # use to predict probabilities to obtain a smoother objective
         if self.mode == ScorerModeSelector.OS_MODE:
-            score = self.os_model.predict_proba(mol_desc)
+            score = self.os_model.predict_proba(mol_desc)[0, 1]
         elif self.mode == ScorerModeSelector.MCS_MODE:
-            score = self.mcs_model.predict_proba(mol_desc)
+            score = self.mcs_model.predict_proba(mol_desc)[0, 1]
         elif self.mode == ScorerModeSelector.DCS_MODE:
-            score = self.dcs_model.predict_proba(mol_desc)
+            score = self.dcs_model.predict_proba(mol_desc)[0, 1]
         return self._transform(score)
 
     def present_score(self, score: float) -> float:
