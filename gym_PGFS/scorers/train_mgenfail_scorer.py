@@ -72,7 +72,7 @@ def train_one_cv(X_train, y_train,
                  hyperparams: Dict,
                  n_folds: int = 9,
                  random_seed_folds: Union[RandomState, int] = 0,
-                 loss_fns: Dict = {}):
+                 score_fns: Dict = {}):
     '''
     Evaluates one hyperparameter set. RandomState for the model should be integrated into the hparams
 
@@ -86,7 +86,7 @@ def train_one_cv(X_train, y_train,
         number of folds
     random_seed_folds
         the seed used by the stratified K fold generator
-    loss_fns
+    score_fns
         loss functions to evaluate
 
     Returns
@@ -106,7 +106,7 @@ str
             X_train[val_index],
             y_train[val_index],
             hyperparams,
-            loss_fns
+            score_fns
         )
 
         # save the results to the data
@@ -120,7 +120,7 @@ str
 def train_one_fold(X: np.ndarray, y: np.ndarray,
                    X_valid: np.ndarray, y_valid: np.ndarray,
                    hyperparams: Dict,
-                   loss_fns: Dict = {}):
+                   score_fns: Dict = {}):
     '''
     Trains and evaluates one fold.
     Parameters
@@ -129,7 +129,7 @@ def train_one_fold(X: np.ndarray, y: np.ndarray,
     y
     X_valid
     y_valid
-    loss_fns
+    score_fns
     hyperparams
 
     Returns
@@ -140,8 +140,8 @@ def train_one_fold(X: np.ndarray, y: np.ndarray,
     clf.fit(X, y)
 
     # compute the train and validation loss
-    train_losses = {k: loss_fn(y, clf.predict(X)) for k, loss_fn in loss_fns.items()}
-    validation_losses = {k: loss_fn(y_valid, clf.predict(X_valid)) for k, loss_fn in loss_fns.items()}
+    train_losses = {k: score_fn(y, clf.predict(X)) for k, score_fn in score_fns.items()}
+    validation_losses = {k: score_fn(y_valid, clf.predict(X_valid)) for k, score_fn in score_fns.items()}
 
     # return a combined fold entry that will go into a dataframe
     return train_losses, validation_losses
@@ -186,11 +186,11 @@ def hyperparameter_eval(X, y,
         hp = {key: int(val) for key, val in hp.items()}
         # evaluate the hyperparameter set
 
-        losses = train_one_cv(X_train,
+        scores = train_one_cv(X_train,
                               y_train,
                               hp, n_folds=n_folds,
                               random_seed_folds=splits_seed,
-                              loss_fns = loss_fns)
+                              score_fns = score_fns)
 
         # record the findings in aim
         run = Run(experiment=experiment_name, repo=aim_record_dir)
@@ -200,21 +200,21 @@ def hyperparameter_eval(X, y,
                 run[key] = val
 
         track = defaultdict(int)
-        for key in loss_fns.keys():
-            for i, loss in enumerate(losses):  # the order of cv folds is deterministic with fixed seed
-                train_loss = loss['train']
-                val_loss = loss['validation']
-                track['train_mean_' + key] += train_loss[key] / len(losses)
-                track['valid_mean_' + key] += val_loss[key] / len(losses)
+        for key in score_fns.keys():
+            for i, score in enumerate(scores):  # the order of cv folds is deterministic with fixed seed
+                train_score = score['train']
+                val_score = score['validation']
+                track['train_mean_' + key] += train_score[key] / len(scores)
+                track['valid_mean_' + key] += val_score[key] / len(scores)
 
-                run.track(train_loss[key], key, step=i, context={'metric_over': 'train'})
-                run.track(val_loss[key], key, step=i, context={'metric_over': 'valid'})
+                run.track(train_score[key], key, step=i, context={'metric_over': 'train'})
+                run.track(val_score[key], key, step=i, context={'metric_over': 'valid'})
         for key, val in track.items():
             run.track(val, key, context={'metric_over': 'mean'})
         run.close()
 
         # return the results to the hyperparameter server
-        hparams_source.submit_result(id, {'loss': 1-track['valid_mean_'+loss_to_select], 'status': STATUS_OK})
+        hparams_source.submit_result(id, {'loss': 1-track['valid_mean_'+score_to_select], 'status': STATUS_OK})
 
         # try to get the next hyperparams
         id, hp = hparams_source.get_next_setting()
@@ -377,14 +377,16 @@ if __name__ == '__main__':
     is_server = argv[1] == 'server'
     assay = argv[2]
     n_folds = int(argv[3])
-    host = argv[4]
-    port = int(argv[5])
+    n_tries = int(argv[4])
+    host = argv[5]
+    port = int(argv[6])
     # example usage (in the root of the package):
-    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL1909140 6 127.0.0.1 5533
-    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909140 6 127.0.0.1 5533
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py server CHEMBL1909140 6 3000 127.0.0.1 5533
+    # python gym_PGFS/scorers/train_mgenfail_scorer.py client CHEMBL1909140 6 3000 127.0.0.1 5533
 
     train_rfc_mgenfail(is_server,
                        dataset=assay,
                        hosts={'server': '127.0.0.1', 'port': 5555},
-                       n_tries=n_folds
+                       n_tries=n_tries,
+                       n_folds=n_folds
                        )
