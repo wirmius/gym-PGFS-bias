@@ -8,7 +8,7 @@
     - actor_critic.py: pytorch modules for AC networks
     - agents.py: PGFS_Agent class
     - recorder.py: MultiTrack class, which is used to gather the statistics during the training
-    - rlutils.py: misceallneous
+    - rlutils.py: miscellaneous
     - runner.py: runner class with agent training loop
 * chemwrapped.py: wrapped rdkit functions
 * chemutils.py: ChemWorld class, that is responsible for loading and managing the templates/reactnats sets
@@ -16,7 +16,7 @@
 * forward_model.py/function_set_basic.py: define the forward reaction model for the environment
 * scoring_functions.py: wraps Apollo1060 scoring functions and provide scaling/normalizing of the reward
 * toy_set_generator.py: botched generator for the toy set (not included)
-* utilspy: miscelaneous
+* utilspy: miscellaneous
 
 ###Setting up
 
@@ -24,7 +24,7 @@ envirnment.yml file contains the definitions of the conda environment needed to 
 ```
 conda env create -f environment.yml
 ```
-Note: the pytorch-gpu will, ufortunately, not get installed this way by default, so the following will have to be run (of course with the appropriate cuda version):
+Note: the pytorch-gpu will, unfortunately, not get installed this way by default, so the following will have to be run (of course with the appropriate cuda version):
 ```
 conda remove pytorch
 conda install pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch -c nvidia
@@ -59,13 +59,13 @@ where the first argument can be substituted with the path to the agent state fil
   - 🟥 improve molecule filtering using guacamole routines to improve stability
 - 🟥 improve performance and paralellize:
   - 🟥 implement the distributed architecture for training an agent
-  - 🟥 implement distributed architecture for hyperparameter selection
+  - 🟨 implement distributed architecture for hyperparameter selection
   - 🟥 get rid of the dusk dependency?
   - 🟥 improve configurability, make compatible with parallel computation
-  - 🟥 consider replacing tensorboard with aimstack
-- 🟥 implement methods from Renz et al. paper: 
+  - 🟨 consider replacing tensorboard with aimstack
+- 🟨 implement methods from Renz et al. paper: 
   - 🟩 rework the scoring function mechanism to be more flexible
-  - 🟥 implement a scoring function for the PGFS similar to on in mgen_fail
+  - 🟩 implement a scoring function for the PGFS similar to one in mgen_fail
   - 🟥 implement an evaluation routine for the PGFS
 
 #### Stage 2:
