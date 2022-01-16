@@ -201,8 +201,10 @@ class MGenFailScorer(ScorerPGFS):
         # initialize transforms
         if 'center' in transforms:
             self._transform = lambda a: a - 0.5
+            self._inv_transform = lambda a: a + 0.5
         else:
             self._transform = lambda a: a
+            self._inv_transform = lambda a: a
 
     def get_id(self) -> str:
         return self.dataset_name
@@ -230,7 +232,7 @@ class MGenFailScorer(ScorerPGFS):
         return self._transform(score)
 
     def present_score(self, score: float) -> float:
-        return score
+        return self._inv_transform(score)
 
 
 def get_scoring_function(type: str, **params) -> ScorerPGFS:
