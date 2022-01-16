@@ -83,6 +83,45 @@ def ChemMolFromSmilesWrapper(smi: str) -> Chem.Mol:
         return m
 
 
+# using the guacamol routines at the beginning to filter out molecule smiles
+from guacamol.utils.chemistry import initialise_neutralisation_reactions, neutralise_charges
+
+
+def ChemGuacamolFilterExtended(smiles: str, include_stereocenters=False) -> str:
+    # Drop out if too long
+    # if len(smiles) > 200:
+    #     return None
+    mol = Chem.MolFromSmiles(smiles)
+    # Drop out if invalid
+    if mol is None:
+        return None
+    mol = Chem.RemoveHs(mol)
+
+    # We only accept molecules consisting of H, B, C, N, O, F, Si, P, S, Cl, aliphatic Se, Br, I.
+    metal_smarts = Chem.MolFromSmarts('[!#1!#5!#6!#7!#8!#9!#14!#15!#16!#17!#34!#35!#53]')
+
+    has_metal = mol.HasSubstructMatch(metal_smarts)
+
+    # Exclude molecules containing the forbidden elements.
+    if has_metal:
+        print(f'metal {smiles}')
+        return None
+
+    canon_smi = Chem.MolToSmiles(mol, isomericSmiles=include_stereocenters)
+
+    # Drop out if too long canonicalized:
+    # if len(canon_smi) > 100:
+    #     return None
+    # Balance charges if unbalanced
+    if canon_smi.count('+') - canon_smi.count('-') != 0:
+        new_mol, changed = neutralise_charges(mol, reactions=initialise_neutralisation_reactions())
+        if changed:
+            mol = new_mol
+            canon_smi = Chem.MolToSmiles(mol, isomericSmiles=include_stereocenters)
+
+    return canon_smi
+
+
 def CheckMol(m: Chem.Mol) -> bool:
     problems = Chem.DetectChemistryProblems(m)
     if len(problems) != 0:

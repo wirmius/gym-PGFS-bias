@@ -8,13 +8,15 @@ from .constants import DOWNLOAD_ROOT
 from .utils import print_verbose, pd_reset_index
 
 from dask import dataframe as dd
-from dask.distributed import Client, LocalCluster, progress
+from dask.distributed import Client, progress
 
 from functools import partial
 
+
 from .chemwrapped import ChemMolFromSmilesWrapper, ChemMolToSmilesWrapper, \
     ReactionFromSMARTSAll, ChemMolToSMARTS, evaluate_reactivity, \
-    ECFP6_bitvector_numpy, CosDistance, DiceDistance, MolDSetDescriptorsNumpy
+    ECFP6_bitvector_numpy, CosDistance, DiceDistance, MolDSetDescriptorsNumpy, \
+    ChemGuacamolFilterExtended
 
 
 def load_toy_reactants_raw() -> pd.DataFrame:
@@ -204,6 +206,7 @@ def extract_templates(rxns_df: pd.DataFrame) -> pd.DataFrame:
     # done
     return templates_df
 
+
 #### TODO: drop the infs and nans from the descriptors (just in case)
 def load_reactants(reactants_type: str,
                    raw_templates_df: pd.DataFrame,
@@ -239,6 +242,10 @@ def load_reactants(reactants_type: str,
     reactants = reactants_loaders[reactants_type]()
 
     print_verbose(f"Raw reactants loaded, n = {len(reactants)}", verbosity, 2)
+
+    print_verbose(f"Filtering reactants using the guacamol routines and selecting only the unique reactants...", verbosity, 2)
+
+    reactants['smiles'] = reactants['smiles'].apply(ChemGuacamolFilterExtended).drop_duplicates()
 
     # first trim down based on the number of heavy atoms
     if max_heavy_atoms > 0:
