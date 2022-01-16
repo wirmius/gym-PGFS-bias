@@ -2,7 +2,7 @@ import gym
 import numpy as np
 import torch
 
-from typing import Dict
+from typing import Dict, Generator
 from tqdm import tqdm
 import os
 
@@ -47,7 +47,7 @@ class Runner(object):
             self.agent.load_checkpoint(os.path.join(self.agent_checkpoint_dir, self.resume_file_name))
 
     @staticmethod
-    def _sample_generator(env, agent, buffer, tracker: MultiTrack, gamma = 0.99):
+    def _sample_generator(env, agent, buffer, tracker: MultiTrack, gumbel_tau, gamma = 0.99):
         '''
         A generator that makes one sample from the environment at a time with handling of the exceptions and logging.
         Parameters
@@ -57,6 +57,8 @@ class Runner(object):
         buffer
         tracker
         gamma
+        gumbel_tau
+            either a value or a generator
 
         Returns
         -------
@@ -69,8 +71,13 @@ class Runner(object):
             o = env.reset()
             done = False
             while not done:
+                gum_tau_value = next(gumbel_tau) if isinstance(gumbel_tau, Generator) else gumbel_tau
                 if agent:
-                    action = agent.act(*o, add_noise=True)
+                    # print(gumbel_tau)
+                    # print(next(gumbel_tau) if isinstance(gumbel_tau, Generator) else gumbel_tau)
+                    action = agent.act(*o,
+                                       gumbel_tau = gum_tau_value,
+                                       add_noise=True)
                 else:
                     action = env.suggest_action()
                 try:
@@ -93,7 +100,7 @@ class Runner(object):
                     tracker.record_transition(r, action[1], mol_str_rep=str(info['new_molecule']))
 
                     o = new_o
-                    yield True
+                    yield gum_tau_value
                 else:
                     tracker.record_error("no_rxn")
 
@@ -153,17 +160,20 @@ class Runner(object):
                                            self.agent,
                                            self.replay,
                                            self.tracker,
-                                           self.gamma)
+                                           exp_decay_annealing(self.g_tau_start, self.g_tau_end,
+                                                               self.max_episodes * self.env.max_steps / 2, spacing=1000),
+                                           self.gamma,
+                                           )
 
         # initialize the gumbel tau decay iterator (make sure to leave a bit of spacing
         # and account for the fact, that gumbel_tau changes every transition)
-        gumbel_tau_annealing = exp_decay_annealing(self.g_tau_start, self.g_tau_end, self.max_episodes*self.env.max_steps/2, spacing=1000)
+        #
 
         # now we should have a buffer that is at the minimum capacity at least
         # can start going one episode at a time
         while self.tracker.total_episodes < self.max_episodes:
             # run the env under the policy
-            next(sampler)
+            gumbel_tau = next(sampler)
 
             # sample a minibatch
             mb = self.replay.sample(self.batch_size)
@@ -174,7 +184,7 @@ class Runner(object):
                                   self.target_tau,
                                   self.gamma,
                                   tracker=self.tracker,
-                                  gumbel_tau=next(gumbel_tau_annealing))
+                                  gumbel_tau=gumbel_tau)
 
         # take the agent back to the CPU
         self.agent.retract()
