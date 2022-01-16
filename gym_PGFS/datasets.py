@@ -245,7 +245,10 @@ def load_reactants(reactants_type: str,
 
     print_verbose(f"Filtering reactants using the guacamol routines and selecting only the unique reactants...", verbosity, 2)
 
-    reactants['smiles'] = reactants['smiles'].apply(ChemGuacamolFilterExtended).drop_duplicates()
+    reactants['smiles'] = reactants['smiles'].apply(ChemGuacamolFilterExtended)
+    reactants = reactants.drop_duplicates(subset='smiles').dropna(subset=['smiles'])
+    # print(reactants['smiles'].apply(lambda a: type(a)).drop_duplicates())
+    # print(reactants.smiles[96])
 
     # first trim down based on the number of heavy atoms
     if max_heavy_atoms > 0:

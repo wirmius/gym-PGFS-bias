@@ -115,6 +115,7 @@ def ChemGuacamolFilterExtended(smiles: str, include_stereocenters=False) -> str:
     # Balance charges if unbalanced
     if canon_smi.count('+') - canon_smi.count('-') != 0:
         new_mol, changed = neutralise_charges(mol, reactions=initialise_neutralisation_reactions())
+        print("neutralized")
         if changed:
             mol = new_mol
             canon_smi = Chem.MolToSmiles(mol, isomericSmiles=include_stereocenters)
