@@ -8,7 +8,7 @@ from gym_PGFS.external.pollo1060.pipeliner_light.smol import SMol
 from gym_PGFS.chemwrapped import Mol, ECFP6_bitvector_numpy, ChemMolToSmilesWrapper
 
 import os
-from typing import Union, Callable
+from typing import Union, Callable, List
 from functools import partial
 import pickle
 
@@ -21,6 +21,8 @@ from typing import Tuple, Dict
 
 from gym_PGFS.constants import PGFS_MODULE_ROOT
 
+# import the abstract class for scoring functions from guacamol to implement it when needed
+from guacamol.scoring_function import BatchScoringFunction as ScoringFunctionGuacamol
 
 def normalize_score(score, mean, std) -> float:
     # normalize the score
@@ -152,6 +154,71 @@ class ScorerModeSelector(Enum):
     DCS_MODE = 2
 
 
+class GuacamolMGenFailScorer(ScoringFunctionGuacamol):
+    def __init__(self, **kwargs):
+        super(GuacamolMGenFailScorer, self).__init__()
+
+        dataset = kwargs['name']
+        fp_fun = kwargs['fingerprints_used']
+        prefix = kwargs['mgenfail_data_prefix']
+
+        os_model = prefix+'/'+dataset+'/OS_MODEL/model.pkl'
+        mcs_model = prefix+'/'+dataset+'/MCS_MODEL/model.pkl'
+        dcs_model = prefix+'/'+dataset+'/DCS_MODEL/model.pkl'
+        # load all three models
+        with open(os_model, 'rb') as f:
+            self.os_model = pickle.load(f)
+        # load all three models
+        with open(dcs_model, 'rb') as f:
+            self.dcs_model = pickle.load(f)
+        # load all three models
+        with open(mcs_model, 'rb') as f:
+            self.mcs_model = pickle.load(f)
+
+        # set other parameters
+        self.dataset_name = dataset
+
+        # fp fun is expected to take either smiles or Mol
+        fn, params = get_fingerprint_fn(fp_fun)
+        self.fp_fun = partial(fn, **params)
+
+        # set the mode by default to optimisation score
+        self.mode = ScorerModeSelector.OS_MODE
+
+        # no score transforms expected for the LSTM HC scorer
+
+    def raw_score_list(self, smiles_list: List[str]) -> List[float]:
+        # predict probabilities to obtain a smoother objective
+        if self.mode == ScorerModeSelector.OS_MODE:
+            score = self.score(smiles_list, self.os_model)
+        elif self.mode == ScorerModeSelector.MCS_MODE:
+            score = self.score(smiles_list, self.mcs_model)
+        elif self.mode == ScorerModeSelector.DCS_MODE:
+            score = self.score(smiles_list, self.dcs_model)
+        return score
+
+    def score(self, smiles_list, clf):
+        """Makes predictions for a list of smiles. Returns none if smiles is invalid
+        borrowed from mgenfail
+        """
+        X = [self.fp_fun(smi) for smi in smiles_list]
+        X_valid = [x for x in X if x is not None]
+        if len(X_valid) == 0:
+            return X
+
+        preds_valid = clf.predict_proba(np.array(X_valid))[:, 1]
+        preds = []
+        i = 0
+        for li, x in enumerate(X):
+            if x is None:
+                preds.append(None)
+            else:
+                preds.append(preds_valid[i])
+                assert preds_valid[i] is not None
+                i += 1
+        return preds
+
+
 class MGenFailScorer(ScorerPGFS):
     def __init__(self, **kwargs):
         '''
@@ -173,7 +240,6 @@ class MGenFailScorer(ScorerPGFS):
         fp_fun = kwargs['fingerprints_used']
         prefix = kwargs['mgenfail_data_prefix']
         transforms = kwargs['transforms']
-
 
         os_model = prefix+'/'+dataset+'/OS_MODEL/model.pkl'
         mcs_model = prefix+'/'+dataset+'/MCS_MODEL/model.pkl'
