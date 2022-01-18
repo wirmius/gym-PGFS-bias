@@ -24,11 +24,12 @@ conf = load_config(config)  # "./gym_PGFS/configs/config_server_default.yaml"
 run_conf = conf['run']
 env = gym_PGFS_basic_from_config(data_path, conf)  # './data'
 
-os_score, mcs_score, dcs_score = compare_mgenfail_mode(env, agent_path, run_conf, n_samples=n_samples)
+os_score, mcs_score, dcs_score, random_scores = compare_mgenfail_mode(env, agent_path, run_conf, n_samples=n_samples)
 # transform = transforms[conf['env']['scoring_transform']]
 f = draw_mgen_comparison_figure(os_score,
                                 mcs_score,
                                 dcs_score,
+                                random_scores,
                                 ylabel=conf['env']['scoring']['name'],
                                 xlabel=f"step #{agent_path.split('/')[-1].split('.')[0].split('_')[-1]}")
 f.savefig(out_image)

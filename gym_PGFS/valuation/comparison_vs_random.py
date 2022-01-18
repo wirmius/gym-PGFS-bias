@@ -27,7 +27,7 @@ def record_rewards_from_env(env: PGFS_env, agent: PGFS_agent = None, n_samples=1
                     a = env.suggest_action()
 
                 s, r, done, _ = env.step(a)
-                retarray[i, ep_counter] = r
+                retarray[i, ep_counter] = env.scoring_fn.present_score(r)
         except:
             continue
 
@@ -114,7 +114,8 @@ def compare_mgenfail_mode(env: Union[PGFS_env, str, os.PathLike],
                            env.observation_space,
                            env.rng,
                            **run_config,
-                           gumbel_tau=run_config['g_tau_start'])
+                           # gumbel_tau=run_config['g_tau_start']
+                           )
         # not forgetting to load the checkpoint specified
         agent.load_checkpoint(agent_fname)
 
@@ -132,8 +133,11 @@ def compare_mgenfail_mode(env: Union[PGFS_env, str, os.PathLike],
     env.scoring_fn.set_mode(ScorerModeSelector.DCS_MODE)
     dcs_scores = record_rewards_from_env(env, agent, n_samples)
 
+    # evaluate the random score
     env.scoring_fn.set_mode(ScorerModeSelector.OS_MODE)
-    return os_scores, mcs_scores, dcs_scores
+    random_scores = record_rewards_from_env(env, None, n_samples)
+
+    return os_scores, mcs_scores, dcs_scores, random_scores
 
 
 def compare_over_timesteps(env: Union[PGFS_env, str, os.PathLike],
@@ -171,6 +175,7 @@ def compare_over_timesteps(env: Union[PGFS_env, str, os.PathLike],
 def draw_mgen_comparison_figure(os_sample: np.ndarray,
                                 mcs_sample: np.ndarray,
                                 dcs_sample: np.ndarray,
+                                rnd_sample: np.ndarray,
                                 size: Tuple = (10, 7),
                                 ylabel = "",
                                 xlabel = ""):
@@ -180,28 +185,35 @@ def draw_mgen_comparison_figure(os_sample: np.ndarray,
     plt.xlabel(xlabel)
     c, c_highlight = 'cornflowerblue', 'dimgrey'
     rng = np.arange(os_sample.shape[1])
-    os_box = ax.boxplot(os_sample, patch_artist=True, positions=rng-0.15, widths=0.2,
+    os_box = ax.boxplot(os_sample, patch_artist=True, positions=rng-0.15, widths=0.1,
                         boxprops=dict(facecolor=c, color=c),
                         capprops=dict(color=c_highlight),
                         whiskerprops=dict(color=c_highlight),
                         flierprops=dict(color=c, markeredgecolor=c),
                         medianprops=dict(color=c_highlight))
-    c, c_highlight = 'navy', 'darkblue'
-    mcs_box = ax.boxplot(mcs_sample, patch_artist=True, positions=rng+0.15, widths=0.2,
+    c, c_highlight = 'navy', 'blue'
+    mcs_box = ax.boxplot(mcs_sample, patch_artist=True, positions=rng-0.05, widths=0.1,
                          boxprops=dict(facecolor=c, color=c),
                          capprops=dict(color=c_highlight),
                          whiskerprops=dict(color=c_highlight),
                          flierprops=dict(color=c, markeredgecolor=c),
                          medianprops=dict(color=c_highlight))
     c, c_highlight = 'red', 'orange'
-    dcs_box = ax.boxplot(dcs_sample, patch_artist=True, positions=rng+0.15, widths=0.2,
+    dcs_box = ax.boxplot(dcs_sample, patch_artist=True, positions=rng+0.05, widths=0.1,
                          boxprops=dict(facecolor=c, color=c),
                          capprops=dict(color=c_highlight),
                          whiskerprops=dict(color=c_highlight),
                          flierprops=dict(color=c, markeredgecolor=c),
                          medianprops=dict(color=c_highlight))
-    ax.legend([os_box["boxes"][0], mcs_box["boxes"][0], dcs_box["boxes"][0]],
-              ['optimization score', 'model control score', 'data control score'],
+    c, c_highlight = 'grey', 'white'
+    rnd_box = ax.boxplot(rnd_sample, patch_artist=True, positions=rng+0.15, widths=0.1,
+                         boxprops=dict(facecolor=c, color=c),
+                         capprops=dict(color=c_highlight),
+                         whiskerprops=dict(color=c_highlight),
+                         flierprops=dict(color=c, markeredgecolor=c),
+                         medianprops=dict(color=c_highlight))
+    ax.legend([os_box["boxes"][0], mcs_box["boxes"][0], dcs_box["boxes"][0], rnd_box["boxes"][0]],
+              ['optimization score', 'model control score', 'data control score', 'random sampling'],
               loc='upper left')
 
     ax.xaxis.set_ticks(rng)
