@@ -54,7 +54,7 @@ env:
   scoring:
     # available types are: pollo1060, guacamol, guacamol_mgenfail
     type: 'guacamol_mgenfail'
-    name: 'CHEMBL1909140'
+    name: 'CHEMBL3888429'
     # scoring transform for mgenfail scorer can be 'center' or 'proba'
     transforms: ['center']
     mgenfail_data_prefix: './data/mgenfail_assays'
