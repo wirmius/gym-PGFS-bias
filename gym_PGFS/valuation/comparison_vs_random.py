@@ -1,8 +1,9 @@
 import os
 
 import numpy as np
+import pandas as pd
 
-from typing import Tuple, Union, Dict
+from typing import Tuple, Union, Dict, List
 
 from matplotlib import pyplot as plt
 
@@ -11,6 +12,7 @@ from ..envs.PGFS_trials import PGFS_env, gym_PGFS_basic_from_config
 from ..rl.agents import PGFS_agent
 
 from tqdm import tqdm
+from gym_PGFS.scorers.scorer import GuacamolMGenFailScorer, ScorerModeSelector
 
 
 def record_rewards_from_env(env: PGFS_env, agent: PGFS_agent = None, n_samples=100):
@@ -138,6 +140,70 @@ def compare_mgenfail_mode(env: Union[PGFS_env, str, os.PathLike],
     random_scores = record_rewards_from_env(env, None, n_samples)
 
     return os_scores, mcs_scores, dcs_scores, random_scores
+
+
+def record_smiles_from_env(env: PGFS_env, agent: PGFS_agent = None, n_samples=100):
+    ep_counter = 0
+    error_count = 0
+    ret_list = []
+    while ep_counter < n_samples:
+        s = env.reset()
+        epsiode_list = [env.rmodel.get_current_molecule()]
+        try:
+            for i in range(1, env.max_steps + 1):
+                if agent:
+                    a = agent.act(*s)
+                else:
+                    a = env.suggest_action()
+
+                s, r, done, _ = env.step(a)
+
+                epsiode_list.append(env.rmodel.get_current_molecule())
+
+            # add to the list of lists
+            ret_list.append(epsiode_list)
+        except:
+            # skip the episode if it is incomplete due to errors
+            continue
+
+        ep_counter += 1
+    # return the rewards
+    return ret_list, error_count
+
+
+def collect_smiles(env: Union[PGFS_env, str, os.PathLike],
+                   agents: Union[os.PathLike],
+                   run_config: Dict = None,
+                   n_samples=100):
+    assert os.path.exists(agents) and os.path.isdir(agents)
+
+    # load agent states one by one and evaluate
+    agent_filenames = [fname for fname in os.listdir(agents) if os.path.isfile(os.path.join(agents, fname))]
+    print(f"Scanning directory {agents} for agent states...")
+    print(agent_filenames)
+
+    return_dict = {}
+    error_counts_dict = {}
+
+    for afile in tqdm(agent_filenames):
+        agent_full_path = os.path.join(agents, afile)
+        agent = PGFS_agent(env.action_space,
+                           env.observation_space,
+                           env.rng,
+                           **run_config,
+                           gumbel_tau=run_config['g_tau_start'])
+        # load the checkpoint
+        agent.load_checkpoint(agent_full_path)
+
+        # get the point of evaluation
+        agent_episode = int(afile.split('.')[0].split('_')[1])
+
+        # conduct an experiment, record the molecules, drop the list of lists of final smiles
+        return_dict[agent_episode], error_counts_dict[agent_episode] = \
+            record_smiles_from_env(env, agent, n_samples = n_samples)
+
+    print(f"Errors recorded: {str({k: v for k, v in error_counts_dict.items() if v > 0})}")
+    return return_dict, error_counts_dict
 
 
 def compare_over_timesteps(env: Union[PGFS_env, str, os.PathLike],
