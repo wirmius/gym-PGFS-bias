@@ -1,3 +1,6 @@
+import os
+
+import pandas as pd
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -8,19 +11,18 @@ from .external.pollo1060.pipeliner_light.smol import SMol
 
 from .chemutils import ChemWorld
 from .chemwrapped import CheckMol, ChemMolFromSmilesWrapper, ChemMolToSmilesWrapper, SmilesToSVG
-from .utils import ReactionFailed, NoKekulizedProducts
+from .utils import ReactionFailed, NoKekulizedProducts, ensure_dir_exists
 from .external.svg_stack import svg_stack as ss
 
 from sklearn.neighbors import NearestNeighbors
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 from gym.spaces import Tuple as SpaceDict, Discrete, Box
 from gym.error import InvalidAction, ResetNeeded
 
 import numpy as np
 from numpy.random import RandomState
-
 
 from .forward_model import Reaction_Model
 
@@ -35,10 +37,53 @@ class Default_RModel(Reaction_Model):
     def __init__(self,
                  cw: ChemWorld = None,
                  rng: RandomState = None,
+                 fmodel_start_conditions: Dict = None,
                  **kwargs):
         super(Default_RModel, self).__init__(**kwargs)
         self.cw = cw
         self.rng = rng
+
+        if fmodel_start_conditions:
+            self.__prepare_starting_molecule_set(self, **fmodel_start_conditions)
+        else:
+            self.starting_reactants = None
+
+    def __prepare_starting_molecule_set(self,
+                                        source_dir: os.PathLike = None,
+                                        train_mode: bool = True,
+                                        max_size: int = 6,
+                                        min_reactions: int = 15,
+                                        ):
+        if not source_dir:
+            # use the one from CW
+            source_dir = self.cw.CP_DIR
+        if os.path.exists(source_dir) and os.path.isdir(source_dir) and \
+                os.path.exists(os.path.join(source_dir, 'starting_mols_train.csv')) and \
+                os.path.exists(os.path.join(source_dir, 'starting_mols_test.csv')):
+            # if the molecule files exist, use one of those
+            if train_mode:
+                self.starting_reactants = pd.read_csv(os.path.join(source_dir, 'starting_mols_train.csv'))
+                return
+            else:
+                self.starting_reactants = pd.read_csv(os.path.join(source_dir, 'starting_mols_test.csv'))
+                return
+        else:
+            # otherwise, generate the files and dump them
+            ensure_dir_exists(source_dir)
+
+            # identify the starting molecule candidates
+            eligible = self.cw.reactants[
+                (self.cw.reactants['n_heavy'] <= max_size) & (self.cw.reactants['n_templates'] >= min_reactions)]
+            # now we have to separate into train and test set
+            test_set = eligible['smiles'].sample(n=len(eligible)//2, replace=False, random_state=self.rng)
+            train_set = eligible['smiles'][~eligible['smiles'].isin(test_set)]
+
+            # save the datasets
+            test_set.to_csv(os.path.join(source_dir, 'starting_mols_test.csv'))
+            train_set.to_csv(os.path.join(source_dir, 'starting_mols_train.csv'))
+
+            # call recursively to load from the csv file
+            return self.__prepare_starting_molecule_set(source_dir, train_mode, max_size, min_reactions)
 
     def seed(self, rng: RandomState = None, seed=None):
         if rng:
@@ -200,9 +245,13 @@ class Default_RModel(Reaction_Model):
         return True
 
     def init_state(self, max_size=6, min_reactions=15):
-        eligible = self.cw.reactants[
-            (self.cw.reactants['n_heavy'] <= max_size) & (self.cw.reactants['n_templates'] >= min_reactions)]
-        return eligible['smiles'].sample(random_state=self.rng).item()
+        if self.starting_reactants:
+            return self.starting_reactants.sample(random_state=self.rng).item()
+        else:
+            # work in legacy mode if no starting reactants are provided
+            eligible = self.cw.reactants[
+                (self.cw.reactants['n_heavy'] <= max_size) & (self.cw.reactants['n_templates'] >= min_reactions)]
+            return eligible['smiles'].sample(random_state=self.rng).item()
 
     def compute_diff(self, obs1, obs2):
         v1 = obs1[0]
@@ -304,6 +353,18 @@ class Default_RModel(Reaction_Model):
     def null_molecule(self):
         return ''
 
+    def suggest_action(self):
+        # TODO: possibly make sampling more direct, with sampling the list of possible molecules directly.
+        raise NotImplemented
+        # a helper function mostly for debug purposes
+        # molvec = self.action_space.sample()[0]
+        # reaction_id = np.where(self.rmodel.get_current_state()[1])[0]
+        # if reaction_id.sum() == 0:
+        #     raise InvalidAction("No action to suggest, the environment is done.")
+        # action = self.rng.choice(reaction_id, size=1).item()
+        # # now that we have a reaction, we can compute eligible compounds and sample
+        #
+        # return tuple([molvec, action])
 
 
 fmodel_dict = {

@@ -126,4 +126,8 @@ class Reaction_Model(ABC):
         '''
         return self.current_mol
 
+    @abstractmethod
+    def suggest_action(self):
+        pass
+
 

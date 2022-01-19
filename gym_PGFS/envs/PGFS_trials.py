@@ -36,7 +36,7 @@ class gym_PGFS_basic_from_config(PGFS_env):
         render = env_config['render']
         max_steps = env_config['max_steps']
         fmodel_type = env_config['fmodel_type']
-        #fmodel_kwargs = env_config['fmodel_kwargs']
+        fmodel_kwargs = env_config['fmodel_kwargs']
 
         cw = ChemWorld(comp_dir=cw_dir, config=config)
         cw.deploy()
@@ -47,5 +47,6 @@ class gym_PGFS_basic_from_config(PGFS_env):
             max_steps=max_steps,
             render=render,
             fmodel=get_forward_model(fmodel_type),
-            cw=cw
+            cw=cw,
+            **fmodel_kwargs
         )

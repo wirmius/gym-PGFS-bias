@@ -49,17 +49,24 @@ chem_world:
   # make it possible to use rdchiral as backend in the future
   #backend: NOT_IMPLEMENTED
 env:
+  # forward model configuration
   fmodel_type: "str_repr"
-  fmodel_kwargs: {}
+  fmodel_kwargs:
+    fmodel_start_conditions:
+#      source_dir: null
+      train_mode: True
+      max_size: 6
+      min_reactions: 15
+  # scoring function configuration
   scoring:
     # available types are: pollo1060, guacamol, guacamol_mgenfail
     type: 'guacamol_mgenfail'
-    name: 'CHEMBL1909140'
+    name: 'CHEMBL3888429'
     # scoring transform for mgenfail scorer can be 'center' or 'proba'
     transforms: ['center']
     mgenfail_data_prefix: './data/mgenfail_assays'
     fingerprints_used: 'ECFP_2_1024'
-
+  # general environment configuration
   max_steps: 5
   render: true
   give_info: true
@@ -89,12 +96,12 @@ run:
   # higher than in the paper, since I do updates less frequently
   target_tau: 0.01 # 0.005
   max_buffer_size: 300000
-  min_buffer_content: 35
+  min_buffer_content: 4096
   batch_size: 32
   max_episodes: 50000
   # measured in batch updates
   # will set to 100, so that I have more checkpoints that I can further evaluate at different training stages
-  # given that envs max step is set to 5, this will produce a checkpoint every 20 episodes or so
+  # given that envs max step is set to 5, this will produce a checkpoint every 200 episodes or so
   # the evaluation routine will pick them up after that and evaluate
   checkpoint_every: 1000
   resume_training: false
