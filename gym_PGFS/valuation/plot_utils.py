@@ -38,23 +38,23 @@ def process_PGFS_output_into_dataset(PGFS_output: Dict, scorer: GuacamolMGenFail
     modes = [ScorerModeSelector.OS_MODE, ScorerModeSelector.MCS_MODE, ScorerModeSelector.DCS_MODE]
     accumulator = pd.DataFrame()
 
-    for iter, list_o_lists in PGFS_output.items():
+    for iter, list_o_lists in tqdm(PGFS_output.items()):
         agent_state_accumulator = pd.DataFrame()
         for episode_outcome in list_o_lists:
-            scores_this_episode = {}
-
-            scores_this_episode['smiles'] = episode_outcome
-            scores_this_episode['epoch'] = [iter for smi in episode_outcome]
-            scores_this_episode['score'] = [str(mode)[19:] for smi in episode_outcome]
-            # the largest difference from the lstm output: parse also all of the stages
-            scores_this_episode['step'] = range(len(episode_outcome))
-
             for mode in modes:
-                scorer.mode = mode
-                scores_this_episode['value'] = scorer.raw_score_list(scores_this_episode)
+                scores_this_episode = {}
 
-            ep_df = pd.DataFrame.from_dict(scores_this_episode, orient='index').transpose()
-            agent_state_accumulator = pd.concat([agent_state_accumulator, ep_df])
+                scores_this_episode['smiles'] = episode_outcome
+                scores_this_episode['epoch'] = [iter for _ in episode_outcome]
+                scores_this_episode['type'] = [str(mode)[19:] for _ in episode_outcome]
+                # the largest difference from the lstm output: parse also all of the stages
+                scores_this_episode['step'] = range(len(episode_outcome))
+
+                scorer.mode = mode
+                scores_this_episode['value'] = scorer.raw_score_list(episode_outcome)
+
+                ep_df = pd.DataFrame.from_dict(scores_this_episode, orient='index').transpose()
+                agent_state_accumulator = pd.concat([agent_state_accumulator, ep_df])
 
         accumulator = pd.concat([accumulator, agent_state_accumulator])
 
@@ -110,7 +110,7 @@ def plot_medians(df: pd.DataFrame,
 
     # add the axis labels
     ax.set_xlabel(x_label)
-    if y_label and not position[0]:
+    if y_label and not position[1]:
         ax.set_ylabel(y_label)
 
     # set title
