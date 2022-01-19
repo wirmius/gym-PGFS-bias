@@ -56,7 +56,7 @@ env:
 #      source_dir: null
       train_mode: True
       max_size: 6
-      min_reactions: 15
+      min_reactions: 10
   # scoring function configuration
   scoring:
     # available types are: pollo1060, guacamol, guacamol_mgenfail

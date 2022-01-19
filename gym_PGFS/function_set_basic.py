@@ -44,32 +44,35 @@ class Default_RModel(Reaction_Model):
         self.rng = rng
 
         if fmodel_start_conditions:
-            self.__prepare_starting_molecule_set(self, **fmodel_start_conditions)
+            self.__prepare_starting_molecule_set(**fmodel_start_conditions)
         else:
             self.starting_reactants = None
+
+        print(self.starting_reactants)
 
     def __prepare_starting_molecule_set(self,
                                         source_dir: os.PathLike = None,
                                         train_mode: bool = True,
-                                        max_size: int = 6,
-                                        min_reactions: int = 15,
+                                        max_size: int = 8,
+                                        min_reactions: int = 10,
                                         ):
         if not source_dir:
             # use the one from CW
-            source_dir = self.cw.CP_DIR
+            source_dir = os.path.join(os.path.abspath(os.path.join(self.cw.CP_DIR, os.pardir)), 'forward_model')
+            ensure_dir_exists(source_dir)
         if os.path.exists(source_dir) and os.path.isdir(source_dir) and \
                 os.path.exists(os.path.join(source_dir, 'starting_mols_train.csv')) and \
                 os.path.exists(os.path.join(source_dir, 'starting_mols_test.csv')):
             # if the molecule files exist, use one of those
             if train_mode:
-                self.starting_reactants = pd.read_csv(os.path.join(source_dir, 'starting_mols_train.csv'))
+                self.starting_reactants = pd.read_csv(os.path.join(source_dir, 'starting_mols_train.csv'))['smiles']
                 return
             else:
-                self.starting_reactants = pd.read_csv(os.path.join(source_dir, 'starting_mols_test.csv'))
+                self.starting_reactants = pd.read_csv(os.path.join(source_dir, 'starting_mols_test.csv'))['smiles']
                 return
         else:
             # otherwise, generate the files and dump them
-            ensure_dir_exists(source_dir)
+            # ensure_dir_exists(source_dir)
 
             # identify the starting molecule candidates
             eligible = self.cw.reactants[
@@ -245,7 +248,7 @@ class Default_RModel(Reaction_Model):
         return True
 
     def init_state(self, max_size=6, min_reactions=15):
-        if self.starting_reactants:
+        if not self.starting_reactants is None:
             return self.starting_reactants.sample(random_state=self.rng).item()
         else:
             # work in legacy mode if no starting reactants are provided
