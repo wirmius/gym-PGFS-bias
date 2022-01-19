@@ -69,38 +69,56 @@ def plot_medians(df: pd.DataFrame,
                  x_label: str = 'Step',
                  y_scale: Tuple[float, float] = None,
                  x_scale: Tuple[float, float] = None):
-    # introduce mode, q1, q3 inside each epoch and type
-    epochs = df.epoch.unique()
-    types = df.type.unique()
-    dct = {'epoch' :[] ,'type' :[] ,'q1' :[] ,'median' :[] ,'q3' :[]}
-    for t in types:
-        typed = df[df['type' ]==t]
-        for e in epochs:
-            s = typed[typed['epoch' ]==e]['value']
-            q1 = s.quantile(.25)
-            q2 = s.quantile(.5)
-            q3 = s.quantile(.75)
-            dct["type"].append(t)
-            dct["epoch"].append(e)
-            dct["q1"].append(q1)
-            dct["q3"].append(q3)
-            dct["median"].append(q2)
-    # create aggregated df
-    aggr_df = pd.DataFrame(dct)
-    aggr_df.head()
+    # # introduce mode, q1, q3 inside each epoch and type
+    # epochs = df.epoch.unique()
+    # types = df.type.unique()
+    # dct = {'epoch' :[] ,'type' :[] ,'q1' :[] ,'median' :[] ,'q3' :[]}
+    # for t in types:
+    #     typed = df[df['type' ]==t]
+    #     for e in epochs:
+    #         s = typed[typed['epoch' ]==e]['value']
+    #         q1 = s.quantile(.25)
+    #         q2 = s.quantile(.5)
+    #         q3 = s.quantile(.75)
+    #         dct["type"].append(t)
+    #         dct["epoch"].append(e)
+    #         dct["q1"].append(q1)
+    #         dct["q3"].append(q3)
+    #         dct["median"].append(q2)
+    # # create aggregated df
+    # aggr_df = pd.DataFrame(dct)
+    # aggr_df.head()
+    #
+    # # plot
+    # cs = ['indigo' ,'yellowgreen' ,'hotpink']
+    # labels = [t[:-5] for t in types.tolist()] #["OS" ,"MCS" ,"DCS"]
+    # dashes = ["-" ,"--" ,"-."]
+    # for i ,t in enumerate(types):
+    #     sub = aggr_df[aggr_df['type' ]==t]
+    #     x = sub['epoch']
+    #     y = sub['median']
+    #     y_q1 = sub['q1']
+    #     y_q3 = sub['q3']
+    #     ax.plot(x, y, dashes[i], c=cs[i], label=labels[i])  # plot median
+    #     ax.fill_between(x, y_q1, y_q3, alpha=0.1, color=cs[i])  # plot iqr
 
-    # plot
-    cs = ['indigo' ,'yellowgreen' ,'hotpink']
-    labels = ["OS" ,"MCS" ,"DCS"]
-    dashes = ["-" ,"--" ,"-."]
-    for i ,t in enumerate(types):
-        sub = aggr_df[aggr_df['type' ]==t]
-        x = sub['epoch']
-        y = sub['median']
-        y_q1 = sub['q1']
-        y_q3 = sub['q3']
-        ax.plot(x, y, dashes[i], c=cs[i], label=labels[i])  # plot median
-        ax.fill_between(x, y_q1, y_q3, alpha=0.1, color=cs[i])  # plot iqr
+    gby = df.groupby(by=['type', 'epoch'])
+    bots = gby.agg(np.quantile, 0.25).reset_index()
+    meds = gby.agg(np.quantile, 0.5).reset_index()
+    tops = gby.agg(np.quantile, 0.75).reset_index()
+
+    types = ["OS_MODE", "MCS_MODE", "DCS_MODE"]
+    dashes = ["-", "--", "-."]
+    cs = ['indigo', 'yellowgreen', 'hotpink']
+    for typ, dash, color in zip(types, dashes, cs):
+
+        xy = meds[meds['type']==typ]
+        y = xy['value'].to_numpy()
+        x = xy['epoch'].to_numpy()
+        y_q1 = bots[bots['type']==typ]['value'].to_numpy()
+        y_q3 = tops[tops['type']==typ]['value'].to_numpy()
+        ax.plot(x, y, dash, c=color, label=typ[:-5])  # plot median
+        ax.fill_between(x, y_q1, y_q3, alpha=0.1, color=color)  # plot iqr
 
     # set the axis scales
     if x_scale:
