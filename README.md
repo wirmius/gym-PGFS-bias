@@ -55,18 +55,18 @@ where the first argument can be substituted with the path to the agent state fil
 
 #### Stage 1:
 - ✅ adapt to using guacamole utility functions for consistency:
-  - ❎ use guacamol functions for preprocessing
+  - ❎ ~~use guacamol functions for preprocessing~~
   - 🟩 improve molecule filtering using guacamole routines to improve stability
 - 🟥 improve performance and paralellize:
   - 🟥 implement the distributed architecture for training an agent
   - 🟨 implement distributed architecture for hyperparameter selection
-  - 🟥 get rid of the dusk dependency?
-  - 🟥 improve configurability, make compatible with parallel computation
-  - 🟨 consider replacing tensorboard with aimstack
-- 🟨 implement methods from Renz et al. paper: 
+  - ❎ ~~get rid of the dusk dependency?~~ (no time, if it ain't broke...)
+  - 🟨 improve configurability, make compatible with parallel computation
+  - ❎ ~~consider replacing tensorboard with aimstack~~ (aimstack is pretty not good)
+- 🟩 implement methods from Renz et al. paper: 
   - 🟩 rework the scoring function mechanism to be more flexible
   - 🟩 implement a scoring function for the PGFS similar to one in mgen_fail
-  - 🟨 implement an evaluation routine for the PGFS
+  - 🟩 implement an evaluation routine for the PGFS
 
 #### Stage 2:
 - 🟥 integrate one of the exploration techniques into the algorithm.
