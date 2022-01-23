@@ -175,7 +175,7 @@ def collect_smiles(env: Union[PGFS_env, str, os.PathLike],
                    agents: Union[os.PathLike, List] = None,
                    run_config: Dict = None,
                    n_samples=100):
-    if isinstance(agents, os.PathLike):
+    if not isinstance(agents, List):
         # if got a directory, then load the agent list from there
         assert os.path.exists(agents) and os.path.isdir(agents)
 
@@ -191,7 +191,8 @@ def collect_smiles(env: Union[PGFS_env, str, os.PathLike],
 
     for afile in tqdm(agent_filenames):
         if afile:
-            agent_full_path = os.path.join(agents, afile)
+            agent_full_path = afile
+            afile = os.path.basename(afile)
             agent = PGFS_agent(env.action_space,
                                env.observation_space,
                                env.rng,

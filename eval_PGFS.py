@@ -20,6 +20,7 @@ out_image = argv[5]
 
 conf = load_config(config)  # "./gym_PGFS/configs/config_server_default.yaml"
 run_conf = conf['run']
+conf['env']['fmodel_kwargs']['fmodel_start_conditions']['train_mode'] = False
 env = gym_PGFS_basic_from_config(data_path, conf)  # './data'
 
 ran, ag = compare_against_random(env, agent_path, run_conf, n_samples=n_samples)

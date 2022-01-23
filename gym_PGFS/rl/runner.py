@@ -145,15 +145,16 @@ class Runner(object):
 
         # STEP 2: proceed with PGFS training routine
         # initialize the tracker for the run
-        self.tracker = MultiTrack(
-            tensorboard_dir=os.path.join(self.env.rmodel.cw.DATA_DIR, 'tensorboard'),
-            max_episodes=self.max_episodes,
-            agent_checkpoint_dir=os.path.abspath(os.path.join(self.env.rmodel.cw.DATA_DIR, 'agent_checkpoints')),
-            agent=self.agent,
-            checkpoint_every=self.checkpoint_every,
-            env=self.env,
-            render_dir=os.path.abspath(os.path.join(self.env.rmodel.cw.DATA_DIR, 'bestiary_renders'))
-        )
+        if not self.tracker:
+            self.tracker = MultiTrack(
+                tensorboard_dir=os.path.join(self.env.rmodel.cw.DATA_DIR, 'tensorboard'),
+                max_episodes=self.max_episodes,
+                agent_checkpoint_dir=os.path.abspath(os.path.join(self.env.rmodel.cw.DATA_DIR, 'agent_checkpoints')),
+                agent=self.agent,
+                checkpoint_every=self.checkpoint_every,
+                env=self.env,
+                render_dir=os.path.abspath(os.path.join(self.env.rmodel.cw.DATA_DIR, 'bestiary_renders'))
+            )
 
         # initialize the environment sampler
         sampler = Runner._sample_generator(self.env,
