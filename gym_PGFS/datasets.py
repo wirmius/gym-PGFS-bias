@@ -83,6 +83,7 @@ mol_represenations = [
     "str"
 ]
 
+# TODO: fix the list of fingerprints, currently all the ECFPs are running at twice the diameter
 fingerprint_functions_list = {
     "ECFP_4_1024": (ECFP6_bitvector_numpy, {"radius": 4, "size": 1024}),
     "ECFP_2_1024": (ECFP6_bitvector_numpy, {"radius": 2, "size": 1024}),

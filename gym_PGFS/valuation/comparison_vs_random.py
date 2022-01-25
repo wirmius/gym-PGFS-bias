@@ -172,31 +172,41 @@ def record_smiles_from_env(env: PGFS_env, agent: PGFS_agent = None, n_samples=10
 
 
 def collect_smiles(env: Union[PGFS_env, str, os.PathLike],
-                   agents: Union[os.PathLike],
+                   agents: Union[os.PathLike, List] = None,
                    run_config: Dict = None,
                    n_samples=100):
-    assert os.path.exists(agents) and os.path.isdir(agents)
+    if not isinstance(agents, List):
+        # if got a directory, then load the agent list from there
+        assert os.path.exists(agents) and os.path.isdir(agents)
 
-    # load agent states one by one and evaluate
-    agent_filenames = [fname for fname in os.listdir(agents) if os.path.isfile(os.path.join(agents, fname))]
-    print(f"Scanning directory {agents} for agent states...")
+        # load agent states one by one and evaluate
+        agent_filenames = [fname for fname in os.listdir(agents) if os.path.isfile(os.path.join(agents, fname))]
+    else:
+        agent_filenames = agents
+    print(f"Evaluating the following agents...")
     print(agent_filenames)
 
     return_dict = {}
     error_counts_dict = {}
 
     for afile in tqdm(agent_filenames):
-        agent_full_path = os.path.join(agents, afile)
-        agent = PGFS_agent(env.action_space,
-                           env.observation_space,
-                           env.rng,
-                           **run_config,
-                           gumbel_tau=run_config['g_tau_start'])
-        # load the checkpoint
-        agent.load_checkpoint(agent_full_path)
-
-        # get the point of evaluation
-        agent_episode = int(afile.split('.')[0].split('_')[1])
+        if afile:
+            agent_full_path = afile
+            afile = os.path.basename(afile)
+            agent = PGFS_agent(env.action_space,
+                               env.observation_space,
+                               env.rng,
+                               **run_config,
+                               gumbel_tau=run_config['g_tau_start'])
+            # load the checkpoint
+            agent.load_checkpoint(agent_full_path)
+            # get the point of evaluation
+            agent_episode = int(afile.split('.')[0].split('_')[1])
+            print(f"Evaluating agent {agent_full_path}...")
+        else:
+            agent = None
+            agent_episode = -1
+            print("Running a random agent.")
 
         # conduct an experiment, record the molecules, drop the list of lists of final smiles
         return_dict[agent_episode], error_counts_dict[agent_episode] = \
